@@ -51,7 +51,13 @@ RUN set -eux; \
     # Cleanup Build Dependencies
     apk del .build-deps
 
-# 3. Custom Configs
+# 3. Install healthcheck script
+RUN echo '#!/bin/sh' > /usr/local/bin/php-fpm-healthcheck && \
+    echo 'SCRIPT_NAME=/ping SCRIPT_FILENAME=/ping REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000 || exit 1' >> /usr/local/bin/php-fpm-healthcheck && \
+    chmod +x /usr/local/bin/php-fpm-healthcheck && \
+    apk add --no-cache fcgi
+
+# 4. Custom Configs
 COPY local.ini /usr/local/etc/php/conf.d/local.ini
 COPY www.conf /usr/local/etc/php-fpm.d/www.conf
 
