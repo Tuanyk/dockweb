@@ -12,7 +12,7 @@ x-php-service: &php-template
     - web_network
 
 services:
-  # --- NGINX (Shared Gateway) ---
+  # --- NGINX (Gateway) ---
   nginx:
     image: nginx:alpine
     container_name: gateway_nginx
@@ -32,8 +32,6 @@ services:
       - web_network
 
   # --- PHP Containers ---
-  
-  # Site: kairoxbuild.com
   php_kairoxbuild:
     <<: *php-template
     container_name: php_kairoxbuild
@@ -44,20 +42,7 @@ services:
       - ./sites/kairoxbuild.com:/var/www/sites/kairoxbuild.com
       - ./logs/php/kairoxbuild.com:/var/log
 
-  # Template for future sites (Uncomment and edit to add)
-  # php_another_site:
-  #   <<: *php-template
-  #   container_name: php_another_site
-  #   environment:
-  #     PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN:-5}
-  #     SITE_NAME: "another_site"
-  #   volumes:
-  #     - ./sites/another-site:/var/www/sites/another-site
-  #     - ./logs/php/another-site:/var/log
-  #   networks:
-  #     - web_network
-
-  # --- Shared Services ---
+  # --- Data Services ---
   mysql:
     image: mysql:8.0
     container_name: shared_mysql
@@ -82,7 +67,40 @@ services:
     networks:
       - web_network
 
-  # --- Security & Maintenance ---
+  # --- Management & Security ---
+  
+  # 1. Automated Backup (Restic)
+  backup:
+    build: ./backup
+    container_name: backup_service
+    restart: unless-stopped
+    environment:
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-secret}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-change_this_secure_password}
+    volumes:
+      - ./sites:/var/www/sites:ro             # Read-only access to source files
+      - ./backups:/backups            # Destination for backup repo
+    depends_on:
+      - mysql
+    networks:
+      - web_network
+
+  # 2. Server Monitoring (Glances)
+  monitor:
+    image: nicolargo/glances:latest-alpine
+    container_name: monitor_glances
+    restart: unless-stopped
+    pid: host                         # Needs host PID to monitor system processes
+    environment:
+      GLANCES_OPT: "-w"               # Start in Web Server mode
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Monitor Docker stats
+    ports:
+      - "61208:61208"                 # Web UI port
+    networks:
+      - web_network
+
+  # 3. Fail2Ban
   fail2ban:
     image: crazymax/fail2ban:latest
     container_name: fail2ban
@@ -96,6 +114,7 @@ services:
       - ./logs/nginx:/var/log/nginx:ro
     restart: always
 
+  # 4. Logrotate
   logrotate:
     image: alpine:latest
     container_name: logrotate

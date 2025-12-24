@@ -5,10 +5,11 @@ if [ -f .env ]; then
   export $(cat .env | xargs)
 fi
 
-# Ensure log directories exist
+# Ensure directories exist
 mkdir -p logs/nginx
 mkdir -p logs/mysql
 mkdir -p logs/php/kairoxbuild.com
+mkdir -p backups
 
 # Default settings
 PHP_CONTAINERS=${PHP_CONTAINER_COUNT:-1}
