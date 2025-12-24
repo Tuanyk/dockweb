@@ -8,6 +8,8 @@ x-php-service: &php-template
   depends_on:
     - mysql
     - redis
+  networks:
+    - web_network
 
 services:
   # --- NGINX (Shared Gateway) ---
@@ -26,6 +28,8 @@ services:
     depends_on:
       - php_kairoxbuild
       - mysql
+    networks:
+      - web_network
 
   # --- PHP Containers ---
   
@@ -50,6 +54,8 @@ services:
   #   volumes:
   #     - ./sites/another-site:/var/www/sites/another-site
   #     - ./logs/php/another-site:/var/log
+  #   networks:
+  #     - web_network
 
   # --- Shared Services ---
   mysql:
@@ -64,6 +70,8 @@ services:
     volumes:
       - ./mysql/data:/var/lib/mysql
       - ./logs/mysql:/var/log/mysql
+    networks:
+      - web_network
 
   redis:
     image: redis:alpine
@@ -71,6 +79,8 @@ services:
     restart: unless-stopped
     volumes:
       - redis-data:/data
+    networks:
+      - web_network
 
   # --- Security & Maintenance ---
   fail2ban:
@@ -93,6 +103,12 @@ services:
     volumes:
       - ./logs/nginx:/var/log/nginx
       - ./logrotate/nginx:/etc/logrotate.d/nginx
+    networks:
+      - web_network
+
+networks:
+  web_network:
+    driver: bridge
 
 volumes:
   redis-data:
