@@ -1,5 +1,14 @@
 version: "3.8"
 
+x-php-service: &php-template
+  build: ./php
+  restart: unless-stopped
+  environment:
+    PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN:-5}
+  depends_on:
+    - mysql
+    - redis
+
 services:
   # --- NGINX (Shared Gateway) ---
   nginx:
@@ -10,73 +19,80 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      # Nginx cần truy cập root của tất cả các site để serve static file (css, js, images)
-      # Mount thư mục sites bên ngoài vào /var/www/sites bên trong
       - ./sites:/var/www/sites:ro
       - ./nginx/conf.d:/etc/nginx/conf.d
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
       - ./logs/nginx:/var/log/nginx
     depends_on:
-      - php_site_a
-      - php_site_b
+      - php_kairoxbuild
       - mysql
 
-  # --- PHP Container cho SITE A ---
-  php_site_a:
-    build: ./php
-    container_name: php_site_a
-    restart: unless-stopped
+  # --- PHP Containers ---
+  
+  # Site: kairoxbuild.com
+  php_kairoxbuild:
+    <<: *php-template
+    container_name: php_kairoxbuild
     environment:
-      PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN} # Nhận giá trị đã chia đều từ start.sh
-      SITE_NAME: "site_a"
+      PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN:-5}
+      SITE_NAME: "kairoxbuild.com"
     volumes:
-      # Chỉ mount code của site A. Quan trọng: Đường dẫn bên trong container
-      # nên khớp với cấu trúc mà Nginx nhìn thấy để tránh lỗi SCRIPT_FILENAME
-      - ./sites/site-a:/var/www/sites/site-a
-      - ./php/local.ini:/usr/local/etc/php/conf.d/local.ini
-      - ./logs/php/site-a:/var/log
-    depends_on:
-      - mysql
-      - redis
+      - ./sites/kairoxbuild.com:/var/www/sites/kairoxbuild.com
+      - ./logs/php/kairoxbuild.com:/var/log
 
-  # --- PHP Container cho SITE B ---
-  php_site_b:
-    build: ./php
-    container_name: php_site_b
-    restart: unless-stopped
-    environment:
-      PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN}
-      SITE_NAME: "site_b"
-    volumes:
-      # Chỉ mount code của site B
-      - ./sites/site-b:/var/www/sites/site-b
-      - ./php/local.ini:/usr/local/etc/php/conf.d/local.ini
-      - ./logs/php/site-b:/var/log
-    depends_on:
-      - mysql
-      - redis
+  # Template for future sites (Uncomment and edit to add)
+  # php_another_site:
+  #   <<: *php-template
+  #   container_name: php_another_site
+  #   environment:
+  #     PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN:-5}
+  #     SITE_NAME: "another_site"
+  #   volumes:
+  #     - ./sites/another-site:/var/www/sites/another-site
+  #     - ./logs/php/another-site:/var/log
 
-  # --- Shared MySQL ---
+  # --- Shared Services ---
   mysql:
     image: mysql:8.0
     container_name: shared_mysql
     restart: unless-stopped
     command: >
-      --innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE}
+      --innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-512M}
       --max-connections=500
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-secret}
     volumes:
       - ./mysql/data:/var/lib/mysql
       - ./logs/mysql:/var/log/mysql
 
-  # --- Shared Redis ---
   redis:
     image: redis:alpine
     container_name: shared_redis
     restart: unless-stopped
     volumes:
       - redis-data:/data
+
+  # --- Security & Maintenance ---
+  fail2ban:
+    image: crazymax/fail2ban:latest
+    container_name: fail2ban
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./fail2ban/jail.d:/data/jail.d
+      - ./fail2ban/filter.d:/data/filter.d
+      - ./logs/nginx:/var/log/nginx:ro
+    restart: always
+
+  logrotate:
+    image: alpine:latest
+    container_name: logrotate
+    command: "/bin/sh -c 'apk add --no-cache logrotate && echo \"*/15 * * * * /usr/sbin/logrotate /etc/logrotate.d/nginx\" >> /etc/crontabs/root && crond -f'"
+    volumes:
+      - ./logs/nginx:/var/log/nginx
+      - ./logrotate/nginx:/etc/logrotate.d/nginx
 
 volumes:
   redis-data:

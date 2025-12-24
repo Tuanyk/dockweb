@@ -1,0 +1,26 @@
+[nginx-http-auth]
+enabled = true
+filter = nginx-http-auth
+logpath = /var/log/nginx/*error.log
+port = http,https
+maxretry = 3
+
+[nginx-badbots]
+enabled  = true
+filter   = nginx-badbots
+logpath  = /var/log/nginx/*access.log
+port     = http,https
+maxretry = 2
+
+[nginx-botsearch]
+enabled  = true
+filter   = nginx-botsearch
+logpath  = /var/log/nginx/*access.log
+port     = http,https
+maxretry = 2
+
+[nginx-limit-req]
+enabled = true
+filter = nginx-limit-req
+logpath = /var/log/nginx/*error.log
+port = http,https
