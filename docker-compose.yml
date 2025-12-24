@@ -1,0 +1,82 @@
+version: "3.8"
+
+services:
+  # --- NGINX (Shared Gateway) ---
+  nginx:
+    image: nginx:alpine
+    container_name: gateway_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Nginx cần truy cập root của tất cả các site để serve static file (css, js, images)
+      # Mount thư mục sites bên ngoài vào /var/www/sites bên trong
+      - ./sites:/var/www/sites:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - php_site_a
+      - php_site_b
+      - mysql
+
+  # --- PHP Container cho SITE A ---
+  php_site_a:
+    build: ./php
+    container_name: php_site_a
+    restart: unless-stopped
+    environment:
+      PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN} # Nhận giá trị đã chia đều từ start.sh
+      SITE_NAME: "site_a"
+    volumes:
+      # Chỉ mount code của site A. Quan trọng: Đường dẫn bên trong container
+      # nên khớp với cấu trúc mà Nginx nhìn thấy để tránh lỗi SCRIPT_FILENAME
+      - ./sites/site-a:/var/www/sites/site-a
+      - ./php/local.ini:/usr/local/etc/php/conf.d/local.ini
+      - ./logs/php/site-a:/var/log
+    depends_on:
+      - mysql
+      - redis
+
+  # --- PHP Container cho SITE B ---
+  php_site_b:
+    build: ./php
+    container_name: php_site_b
+    restart: unless-stopped
+    environment:
+      PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN}
+      SITE_NAME: "site_b"
+    volumes:
+      # Chỉ mount code của site B
+      - ./sites/site-b:/var/www/sites/site-b
+      - ./php/local.ini:/usr/local/etc/php/conf.d/local.ini
+      - ./logs/php/site-b:/var/log
+    depends_on:
+      - mysql
+      - redis
+
+  # --- Shared MySQL ---
+  mysql:
+    image: mysql:8.0
+    container_name: shared_mysql
+    restart: unless-stopped
+    command: >
+      --innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE}
+      --max-connections=500
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - ./mysql/data:/var/lib/mysql
+      - ./logs/mysql:/var/log/mysql
+
+  # --- Shared Redis ---
+  redis:
+    image: redis:alpine
+    container_name: shared_redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
