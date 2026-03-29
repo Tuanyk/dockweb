@@ -1,21 +1,3 @@
-version: "3.8"
-
-x-php-service: &php-template
-  build: ./php
-  restart: unless-stopped
-  environment:
-    PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN:-5}
-  depends_on:
-    - mysql
-    - redis
-  networks:
-    - web_network
-  logging:
-    driver: "json-file"
-    options:
-      max-size: "10m"
-      max-file: "3"
-
 services:
   # --- NGINX (Gateway) ---
   nginx:
@@ -33,8 +15,9 @@ services:
       - ./certbot/conf:/etc/letsencrypt:ro
       - ./certbot/www:/var/www/certbot:ro
       - ./nginx/cache:/var/cache/nginx
+      - ./cloudflare-certs:/etc/nginx/cloudflare-certs:ro
+      - ./nginx/cloudflare-ips.conf:/etc/nginx/cloudflare-ips.conf:ro
     depends_on:
-      - php_kairoxbuild
       - mysql
     networks:
       - web_network
@@ -44,7 +27,7 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health" || "exit 1"]
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -58,30 +41,7 @@ services:
           memory: 128M
           cpus: '0.25'
 
-  # --- PHP Containers ---
-  php_kairoxbuild:
-    <<: *php-template
-    container_name: php_kairoxbuild
-    environment:
-      PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN:-5}
-      SITE_NAME: "kairoxbuild.com"
-    volumes:
-      - ./sites/kairoxbuild.com:/var/www/sites/kairoxbuild.com
-      - ./logs/php/kairoxbuild.com:/var/log
-    healthcheck:
-      test: ["CMD-SHELL", "php-fpm-healthcheck || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '1.0'
-        reservations:
-          memory: 128M
-          cpus: '0.25'
+  # --- PHP Containers (managed by dockweb in docker-compose.sites.yml) ---
 
   # --- Data Services ---
   mysql:

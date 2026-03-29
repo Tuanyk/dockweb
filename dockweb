@@ -1,0 +1,193 @@
+#!/bin/bash
+#
+# dockweb - Docker Web Server Manager
+# Manage Nginx + PHP-FPM + MySQL + Redis multi-site stack
+#
+
+set -euo pipefail
+
+# Resolve project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source modules
+source "${SCRIPT_DIR}/lib/common.sh"
+source "${SCRIPT_DIR}/lib/services.sh"
+source "${SCRIPT_DIR}/lib/sites.sh"
+source "${SCRIPT_DIR}/lib/ssl.sh"
+source "${SCRIPT_DIR}/lib/backup.sh"
+source "${SCRIPT_DIR}/lib/monitor.sh"
+source "${SCRIPT_DIR}/lib/setup.sh"
+
+VERSION="1.0.0"
+
+show_banner() {
+    echo ""
+    echo -e "${BOLD}${CYAN}  ┌──────────────────────────────────────┐${NC}"
+    echo -e "${BOLD}${CYAN}  │     dockweb v${VERSION}                    │${NC}"
+    echo -e "${BOLD}${CYAN}  │     Docker Web Server Manager        │${NC}"
+    echo -e "${BOLD}${CYAN}  └──────────────────────────────────────┘${NC}"
+}
+
+show_usage() {
+    show_banner
+    echo ""
+    echo "  Usage: dockweb [command] [options]"
+    echo ""
+    echo "  Services:"
+    echo "    start               Start all services"
+    echo "    stop                Stop all services"
+    echo "    restart             Restart all services"
+    echo "    status              Show status and resource usage"
+    echo "    update              Pull latest images and rebuild"
+    echo ""
+    echo "  Sites:"
+    echo "    site list           List all configured sites"
+    echo "    site add            Add a new site (interactive wizard)"
+    echo "    site remove <domain>  Remove a site"
+    echo ""
+    echo "  SSL:"
+    echo "    ssl                 SSL management menu"
+    echo "    ssl <domain>        Show SSL info for domain"
+    echo "    ssl <domain> <mode> Switch SSL mode (cloudflare|letsencrypt)"
+    echo "    ssl install-cf <domain>   Install Cloudflare Origin Cert"
+    echo "    ssl install-le <domain>   Install Let's Encrypt Cert"
+    echo "    ssl update-cf-ips         Update Cloudflare IP ranges"
+    echo ""
+    echo "  Backup:"
+    echo "    backup now          Run backup immediately"
+    echo "    backup list         List backup snapshots"
+    echo "    backup restore      Restore from backup"
+    echo "    backup test         Test backup restore"
+    echo ""
+    echo "  Monitoring:"
+    echo "    log [service]       View service logs"
+    echo "    monitor             Show health status"
+    echo ""
+    echo "  Setup:"
+    echo "    setup               Initial server setup"
+    echo ""
+    echo "  Run without arguments for interactive menu."
+    echo ""
+}
+
+show_menu() {
+    while true; do
+        show_banner
+        echo ""
+        echo -e "  ${BOLD}Services${NC}                  ${BOLD}Backup${NC}"
+        echo "    1) Start services       9) Backup now"
+        echo "    2) Stop services       10) List backups"
+        echo "    3) Restart services    11) Restore backup"
+        echo "    4) Show status         12) Test backup"
+        echo ""
+        echo -e "  ${BOLD}Sites${NC}                     ${BOLD}Monitoring${NC}"
+        echo "    5) List sites          13) View logs"
+        echo "    6) Add site            14) Health monitor"
+        echo "    7) Remove site         15) Update images"
+        echo "    8) Manage SSL          16) Server setup"
+        echo ""
+        echo "    0) Exit"
+        echo ""
+        echo -ne "  Choose [0-16]: "
+        read -r choice
+
+        case "$choice" in
+            1)  cmd_start ;;
+            2)  cmd_stop ;;
+            3)  cmd_restart ;;
+            4)  cmd_status ;;
+            5)  cmd_site_list ;;
+            6)  cmd_site_add ;;
+            7)  cmd_site_remove ;;
+            8)  cmd_ssl_menu ;;
+            9)  cmd_backup_now ;;
+            10) cmd_backup_list ;;
+            11) cmd_backup_restore ;;
+            12) cmd_backup_test ;;
+            13) cmd_log ;;
+            14) cmd_monitor ;;
+            15) cmd_update ;;
+            16) cmd_setup ;;
+            0)  echo ""; log_info "Bye!"; exit 0 ;;
+            *)  log_error "Invalid choice." ;;
+        esac
+
+        echo ""
+        echo -ne "  ${DIM}Press Enter to continue...${NC}"
+        read -r
+    done
+}
+
+# Command routing
+main() {
+    cd "$SCRIPT_DIR"
+
+    case "${1:-}" in
+        help|--help|-h)
+            show_usage
+            ;;
+        --version|-v)
+            echo "dockweb v${VERSION}"
+            ;;
+        start)
+            cmd_start
+            ;;
+        stop)
+            cmd_stop
+            ;;
+        restart)
+            cmd_restart
+            ;;
+        status)
+            cmd_status
+            ;;
+        update)
+            cmd_update
+            ;;
+        site)
+            case "${2:-}" in
+                list)   cmd_site_list ;;
+                add)    cmd_site_add ;;
+                remove) cmd_site_remove "${3:-}" ;;
+                *)      log_error "Usage: dockweb site {list|add|remove <domain>}" ;;
+            esac
+            ;;
+        ssl)
+            case "${2:-}" in
+                "")           cmd_ssl_menu ;;
+                install-cf)   cmd_ssl_install_cf "${3:-}" ;;
+                install-le)   cmd_ssl_install_le "${3:-}" ;;
+                update-cf-ips) update_cloudflare_ips ;;
+                *)            cmd_ssl_menu "${2:-}" "${3:-}" ;;
+            esac
+            ;;
+        backup)
+            case "${2:-}" in
+                now)     cmd_backup_now ;;
+                list)    cmd_backup_list ;;
+                restore) cmd_backup_restore ;;
+                test)    cmd_backup_test ;;
+                *)       log_error "Usage: dockweb backup {now|list|restore|test}" ;;
+            esac
+            ;;
+        log)
+            cmd_log "${2:-}"
+            ;;
+        monitor)
+            cmd_monitor
+            ;;
+        setup)
+            cmd_setup
+            ;;
+        "")
+            show_menu
+            ;;
+        *)
+            log_error "Unknown command: $1"
+            echo "  Run 'dockweb help' for usage."
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
