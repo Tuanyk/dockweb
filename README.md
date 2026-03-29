@@ -1,80 +1,120 @@
-# Docker Web Server (Nginx, PHP-FPM, MySQL, Redis)
+# Docker Web Server
 
-A high-performance, secure Docker stack optimized for a **6GB RAM** server. Includes automatic resource tuning, backups, and monitoring.
+Multi-site Docker stack: Nginx + PHP-FPM 8.3 + MySQL 8.0 + Redis. Managed by **dockweb** CLI.
 
-## 🚀 Quick Start
+Each site gets its own PHP container, database, and SSL mode (Cloudflare or Let's Encrypt).
 
-1. **Setup Environment**
-   ```bash
-   cp .env.example .env  # (If you haven't already)
-   chmod +x start.sh
-   ```
+## Quick Start
 
-2. **Start Server**
-   ```bash
-   ./start.sh
-   ```
-   *This script automatically calculates optimal RAM settings (MySQL Buffer Pool & PHP Child Workers) based on your specific server size.*
-
-## 🌐 Adding a New Website
-
-1. **Add PHP Service**
-   Open `docker-compose.yml` and add a new service (copy the template):
-   ```yaml
-   php_mysite:
-     <<: *php-template
-     container_name: php_mysite
-     environment:
-       PM_MAX_CHILDREN: ${PHP_PM_MAX_CHILDREN:-5}
-       SITE_NAME: "mysite.com"
-     volumes:
-       - ./sites/mysite.com:/var/www/sites/mysite.com
-       - ./logs/php/mysite.com:/var/log
-   ```
-
-2. **Add Nginx Config**
-   Create `nginx/conf.d/mysite.com.conf`. Ensure `fastcgi_pass` points to your new service name (e.g., `php_mysite:9000`).
-
-3. **Update Resource Counter**
-   Open `.env` and increment the site counter. **This prevents Out-Of-Memory crashes.**
-   ```ini
-   PHP_CONTAINER_COUNT=2  # Changed from 1 to 2
-   ```
-
-4. **Apply Changes**
-   ```bash
-   ./start.sh
-   ```
-
-## 🛡️ Features
-
-- **Security**: 
-  - Nginx hardened (HSTS, XSS Protection, hidden versions).
-  - PHP hidden (`expose_php = Off`).
-  - **Fail2Ban**: Automatically bans IPs showing malicious behavior in Nginx logs.
-- **Performance**:
-  - **Opcache + JIT**: PHP 8.3 configured for max speed.
-  - **Redis**: Ready for object caching.
-  - **Dynamic Tuning**: RAM allocation adjusts automatically if you add more sites.
-- **Backups**:
-  - **Restic**: Incremental, deduplicated backups running daily at 03:00 AM.
-  - Location: `./backups`
-- **Monitoring**:
-  - **Glances**: Web UI at `http://YOUR_IP:61208`.
-
-## 🛠️ Management Commands
-
-**View Backups:**
 ```bash
-docker exec -it backup_service restic snapshots
+# 1. Setup server (Docker, firewall, swap, kernel tuning)
+./dockweb setup
+
+# 2. Edit passwords
+nano .env
+
+# 3. Add your first site
+./dockweb site add
+
+# 4. Start everything
+./dockweb start
+
+# 5. Install SSL certificate
+./dockweb ssl install-cf example.com   # Cloudflare
+./dockweb ssl install-le example.com   # Let's Encrypt
 ```
 
-**Manual Backup:**
-```bash
-docker exec -it backup_service /scripts/backup.sh
+## dockweb Commands
+
+```
+./dockweb                    Interactive menu (recommended)
+./dockweb help               Show all commands
+
+Services:
+  dockweb start              Start all containers
+  dockweb stop               Stop all containers
+  dockweb restart             Restart all containers
+  dockweb status              Show status + resource usage
+  dockweb update              Pull latest images and rebuild
+
+Sites:
+  dockweb site list           List all sites
+  dockweb site add            Add site (interactive wizard)
+  dockweb site remove <domain>
+
+SSL:
+  dockweb ssl                 SSL management menu
+  dockweb ssl <domain> <mode> Switch mode (cloudflare|letsencrypt)
+  dockweb ssl install-cf <d>  Install Cloudflare Origin Certificate
+  dockweb ssl install-le <d>  Install Let's Encrypt certificate
+  dockweb ssl update-cf-ips   Refresh Cloudflare IP ranges
+
+Backup:
+  dockweb backup now          Run backup immediately
+  dockweb backup list         List snapshots
+  dockweb backup restore      Interactive restore
+  dockweb backup test         Test restore (non-destructive)
+
+Monitoring:
+  dockweb log [service]       View logs (nginx, mysql, php, etc.)
+  dockweb monitor             Health check dashboard
 ```
 
-**Check Logs:**
+## Adding a Site
+
 ```bash
-tail -f logs/nginx/error.log
+./dockweb site add
 ```
+
+The wizard will:
+1. Ask for domain name
+2. Ask SSL mode (Cloudflare or Let's Encrypt)
+3. Auto-create: PHP container, nginx config, database + user
+4. Print WordPress-ready DB credentials
+
+## Architecture
+
+```
+Internet -> Cloudflare (CDN/WAF/SSL) -> Server:443 -> Nginx -> PHP-FPM -> MySQL
+                                                         |
+                                                         +-> Redis (cache)
+```
+
+| Service | Purpose |
+|---------|---------|
+| Nginx | Reverse proxy, static files, FastCGI cache |
+| PHP-FPM 8.3 | One container per site (isolated) |
+| MySQL 8.0 | Shared database, per-site users |
+| Redis | Shared cache (sessions, objects) |
+| Restic | Daily backup at 03:00 (7d/4w/6m retention) |
+| Fail2Ban | Auto-ban malicious IPs |
+| Certbot | Let's Encrypt auto-renewal |
+| Glances | Monitoring (localhost:61208, SSH tunnel) |
+
+## File Structure
+
+```
+dockweb              CLI tool
+lib/                 CLI modules
+templates/           Nginx/PHP/SQL templates
+docker-compose.yml   Core services (nginx, mysql, redis, etc.)
+docker-compose.sites.yml   Auto-generated PHP containers
+nginx/conf.d/        Per-site nginx configs (auto-generated)
+sites/<domain>/      Website files (managed separately)
+cloudflare-certs/    Origin certificates
+.env                 Passwords and settings
+```
+
+## Server Requirements
+
+- Ubuntu/Debian (tested on Ubuntu 22.04+)
+- Minimum 2GB RAM (4GB+ recommended)
+- Docker + Docker Compose plugin
+
+## Cloudflare Setup
+
+1. Add domain to Cloudflare, set DNS A record (proxied)
+2. SSL/TLS > set **Full (Strict)**
+3. Origin Server > Create Certificate (15-year, free)
+4. `./dockweb ssl install-cf yourdomain.com` (paste cert + key)
+5. Firewall restricts 80/443 to Cloudflare IPs only (`dockweb setup` option 3)
