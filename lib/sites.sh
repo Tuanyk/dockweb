@@ -45,13 +45,15 @@ cmd_site_add() {
     echo "  SSL Mode:"
     echo "    1) Cloudflare Origin Certificate"
     echo "    2) Let's Encrypt"
+    echo "    3) Local development (HTTP only, no SSL)"
     echo ""
-    echo -ne "  Choose [1-2]: "
+    echo -ne "  Choose [1-3]: "
     read -r ssl_choice
     local ssl_mode
     case "$ssl_choice" in
         1) ssl_mode="cloudflare" ;;
         2) ssl_mode="letsencrypt" ;;
+        3) ssl_mode="local" ;;
         *) log_error "Invalid choice."; return 1 ;;
     esac
 
@@ -126,7 +128,7 @@ CONFEOF
         else
             log_info "Run 'dockweb ssl install-cf $domain' later to install the certificate."
         fi
-    else
+    elif [[ "$ssl_mode" == "letsencrypt" ]]; then
         echo ""
         log_info "Start services first, then run: dockweb ssl install-le $domain"
     fi
@@ -280,11 +282,12 @@ generate_nginx_conf() {
     local php_container="$3"
     local template output
 
-    if [[ "$ssl_mode" == "cloudflare" ]]; then
-        template="${DOCKWEB_ROOT}/templates/nginx-cloudflare.conf.tpl"
-    else
-        template="${DOCKWEB_ROOT}/templates/nginx-letsencrypt.conf.tpl"
-    fi
+    case "$ssl_mode" in
+        cloudflare)  template="${DOCKWEB_ROOT}/templates/nginx-cloudflare.conf.tpl" ;;
+        letsencrypt) template="${DOCKWEB_ROOT}/templates/nginx-letsencrypt.conf.tpl" ;;
+        local)       template="${DOCKWEB_ROOT}/templates/nginx-local.conf.tpl" ;;
+        *)           log_error "Unknown SSL mode: $ssl_mode"; return 1 ;;
+    esac
 
     output="${DOCKWEB_ROOT}/nginx/conf.d/${domain}.conf"
 

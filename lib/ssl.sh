@@ -27,8 +27,10 @@ cmd_ssl_menu() {
             local cert_status="missing"
             if [[ "$SSL_MODE" == "cloudflare" ]]; then
                 [[ -f "${DOCKWEB_ROOT}/cloudflare-certs/${d}/origin.pem" ]] && cert_status="installed"
-            else
+            elif [[ "$SSL_MODE" == "letsencrypt" ]]; then
                 [[ -f "${DOCKWEB_ROOT}/certbot/conf/live/${d}/fullchain.pem" ]] && cert_status="installed"
+            elif [[ "$SSL_MODE" == "local" ]]; then
+                cert_status="n/a (http)"
             fi
             printf "    %d) %-30s %-12s [%s]\n" "$i" "$d" "$SSL_MODE" "$cert_status"
         done <<< "$sites"
@@ -65,11 +67,13 @@ cmd_ssl_menu() {
                 echo "  New SSL mode:"
                 echo "    1) cloudflare"
                 echo "    2) letsencrypt"
+                echo "    3) local (HTTP only)"
                 echo -ne "  Choose: "
                 read -r mode_choice
                 case "$mode_choice" in
                     1) cmd_ssl_switch "$d" "cloudflare" ;;
                     2) cmd_ssl_switch "$d" "letsencrypt" ;;
+                    3) cmd_ssl_switch "$d" "local" ;;
                     *) log_error "Invalid." ;;
                 esac
                 ;;
@@ -96,8 +100,10 @@ cmd_ssl_menu() {
         local cert_status="missing"
         if [[ "$SSL_MODE" == "cloudflare" ]]; then
             [[ -f "${DOCKWEB_ROOT}/cloudflare-certs/${domain}/origin.pem" ]] && cert_status="installed"
-        else
+        elif [[ "$SSL_MODE" == "letsencrypt" ]]; then
             [[ -f "${DOCKWEB_ROOT}/certbot/conf/live/${domain}/fullchain.pem" ]] && cert_status="installed"
+        elif [[ "$SSL_MODE" == "local" ]]; then
+            cert_status="n/a (http)"
         fi
         echo "  Cert:     $cert_status"
     fi
@@ -268,8 +274,8 @@ cmd_ssl_switch() {
         return 1
     fi
 
-    if [[ "$new_mode" != "cloudflare" && "$new_mode" != "letsencrypt" ]]; then
-        log_error "SSL mode must be 'cloudflare' or 'letsencrypt'."
+    if [[ "$new_mode" != "cloudflare" && "$new_mode" != "letsencrypt" && "$new_mode" != "local" ]]; then
+        log_error "SSL mode must be 'cloudflare', 'letsencrypt', or 'local'."
         return 1
     fi
 

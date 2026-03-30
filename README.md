@@ -2,7 +2,7 @@
 
 Multi-site Docker stack: Nginx + PHP-FPM 8.3 + MySQL 8.0 + Redis. Managed by **dockweb** CLI.
 
-Each site gets its own PHP container, database, and SSL mode (Cloudflare or Let's Encrypt).
+Each site gets its own PHP container, database, and SSL mode (Cloudflare, Let's Encrypt, or local HTTP).
 
 ## Quick Start
 
@@ -19,9 +19,29 @@ nano .env
 # 4. Start everything
 ./dockweb start
 
-# 5. Install SSL certificate
+# 5. Install SSL certificate (production only)
 ./dockweb ssl install-cf example.com   # Cloudflare
 ./dockweb ssl install-le example.com   # Let's Encrypt
+```
+
+## Local Development
+
+Test the full stack on your laptop without SSL or Cloudflare:
+
+```bash
+# 1. Add site with "local" SSL mode (option 3 in wizard)
+./dockweb site add
+# Enter domain: mysite.local
+# SSL mode: 3 (local)
+
+# 2. Add domain to /etc/hosts
+echo "127.0.0.1 mysite.local" | sudo tee -a /etc/hosts
+
+# 3. Start and visit http://mysite.local
+./dockweb start
+
+# When ready for production, switch SSL mode:
+./dockweb ssl mysite.com cloudflare
 ```
 
 ## dockweb Commands
@@ -44,7 +64,7 @@ Sites:
 
 SSL:
   dockweb ssl                 SSL management menu
-  dockweb ssl <domain> <mode> Switch mode (cloudflare|letsencrypt)
+  dockweb ssl <domain> <mode> Switch mode (cloudflare|letsencrypt|local)
   dockweb ssl install-cf <d>  Install Cloudflare Origin Certificate
   dockweb ssl install-le <d>  Install Let's Encrypt certificate
   dockweb ssl update-cf-ips   Refresh Cloudflare IP ranges

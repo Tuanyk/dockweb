@@ -48,7 +48,7 @@ show_usage() {
     echo "  SSL:"
     echo "    ssl                 SSL management menu"
     echo "    ssl <domain>        Show SSL info for domain"
-    echo "    ssl <domain> <mode> Switch SSL mode (cloudflare|letsencrypt)"
+    echo "    ssl <domain> <mode> Switch SSL mode (cloudflare|letsencrypt|local)"
     echo "    ssl install-cf <domain>   Install Cloudflare Origin Cert"
     echo "    ssl install-le <domain>   Install Let's Encrypt Cert"
     echo "    ssl update-cf-ips         Update Cloudflare IP ranges"
