@@ -95,12 +95,14 @@ cmd_site_add() {
     mkdir -p "${DOCKWEB_ROOT}/sites/${domain}/public"
     mkdir -p "${DOCKWEB_ROOT}/logs/php/${domain}"
 
-    # Placeholder index
-    cat > "${DOCKWEB_ROOT}/sites/${domain}/public/index.php" <<PHPEOF
+    # Placeholder index (only if no index.php exists yet)
+    if [[ ! -f "${DOCKWEB_ROOT}/sites/${domain}/public/index.php" ]]; then
+        cat > "${DOCKWEB_ROOT}/sites/${domain}/public/index.php" <<PHPEOF
 <?php
 echo "<h1>$domain</h1><p>Site is ready. Deploy your application here.</p>";
 phpinfo();
 PHPEOF
+    fi
 
     # Step 6: Write site config
     log_info "Saving site config..."
