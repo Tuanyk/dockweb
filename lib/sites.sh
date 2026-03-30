@@ -173,7 +173,7 @@ CONFEOF
 }
 
 cmd_site_remove() {
-    local domain="$1"
+    local domain="${1:-}"
     if [[ -z "$domain" ]]; then
         echo -ne "  Domain to remove: "
         read -r domain
@@ -267,18 +267,18 @@ EMPTY
 
     echo "services:" >> "$tmp"
 
-    while IFS= read -r domain; do
-        [[ -z "$domain" ]] && continue
+    while IFS= read -r d; do
+        [[ -z "$d" ]] && continue
         local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
-        get_site_conf "$domain" || continue
+        get_site_conf "$d" || continue
 
         local service_name
-        service_name=$(sanitize_domain "$domain")
+        service_name=$(sanitize_domain "$d")
 
         sed \
             -e "s|{{SERVICE_NAME}}|${service_name}|g" \
             -e "s|{{CONTAINER_NAME}}|${PHP_CONTAINER}|g" \
-            -e "s|{{DOMAIN}}|${domain}|g" \
+            -e "s|{{DOMAIN}}|${d}|g" \
             "${DOCKWEB_ROOT}/templates/php-service.yml.tpl" >> "$tmp"
         echo "" >> "$tmp"
     done <<< "$sites"

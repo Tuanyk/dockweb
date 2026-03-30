@@ -2,8 +2,8 @@
 # dockweb - SSL management
 
 cmd_ssl_menu() {
-    local domain="$1"
-    local new_mode="$2"
+    local domain="${1:-}"
+    local new_mode="${2:-}"
 
     if [[ -z "$domain" ]]; then
         header "SSL Management"
@@ -115,7 +115,7 @@ cmd_ssl_menu() {
 }
 
 cmd_ssl_install_cf() {
-    local domain="$1"
+    local domain="${1:-}"
     if [[ -z "$domain" ]]; then
         echo -ne "  Domain: "
         read -r domain
@@ -192,7 +192,7 @@ cmd_ssl_install_cf() {
 }
 
 cmd_ssl_install_le() {
-    local domain="$1"
+    local domain="${1:-}"
     if [[ -z "$domain" ]]; then
         echo -ne "  Domain: "
         read -r domain
@@ -271,8 +271,8 @@ cmd_ssl_install_le() {
 }
 
 cmd_ssl_switch() {
-    local domain="$1"
-    local new_mode="$2"
+    local domain="${1:-}"
+    local new_mode="${2:-}"
 
     if [[ ! -f "${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf" ]]; then
         log_error "Site '$domain' not found."
