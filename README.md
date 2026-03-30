@@ -104,12 +104,13 @@ Internet -> Cloudflare (CDN/WAF/SSL) -> Server:443 -> Nginx -> PHP-FPM -> MySQL
 |---------|---------|
 | Nginx | Reverse proxy, static files, FastCGI cache |
 | PHP-FPM 8.3 | One container per site (isolated) |
-| MySQL 8.0 | Shared database, per-site users |
+| MySQL 8.4 | Shared database, per-site users |
 | Redis | Shared cache (sessions, objects) |
 | Restic | Daily backup at 03:00 (7d/4w/6m retention) |
 | Fail2Ban | Auto-ban malicious IPs |
 | Certbot | Let's Encrypt auto-renewal |
-| Glances | Monitoring (localhost:61208, SSH tunnel) |
+| Adminer | Database UI (localhost:8888, SSH tunnel) |
+| Glances | System monitoring (localhost:61208, SSH tunnel) |
 
 ## File Structure
 
@@ -131,10 +132,124 @@ cloudflare-certs/    Origin certificates
 - Minimum 2GB RAM (4GB+ recommended)
 - Docker + Docker Compose plugin
 
-## Cloudflare Setup
+## Production Deployment Guide
 
-1. Add domain to Cloudflare, set DNS A record (proxied)
-2. SSL/TLS > set **Full (Strict)**
-3. Origin Server > Create Certificate (15-year, free)
-4. `./dockweb ssl install-cf yourdomain.com` (paste cert + key)
-5. Firewall restricts 80/443 to Cloudflare IPs only (`dockweb setup` option 3)
+### 1. Initial Server Setup
+
+```bash
+# SSH into your server
+ssh user@your-server-ip
+
+# Clone the project
+git clone <your-repo> docker-web2
+cd docker-web2
+
+# Run server setup (installs Docker, firewall, swap, kernel tuning)
+./dockweb setup
+# Choose option 1 (Everything) for fresh server
+
+# Generate and set secure passwords
+openssl rand -base64 32   # Use for DB_ROOT_PASSWORD
+openssl rand -base64 32   # Use for RESTIC_PASSWORD
+nano .env
+```
+
+### 2. Configure Firewall
+
+During `dockweb setup`, choose to restrict ports 80/443 to Cloudflare IPs only.
+This means no one can bypass Cloudflare to hit your server directly.
+
+SSH (port 22) is always open and unaffected by Cloudflare.
+
+```
+SSH:   Your laptop ────────────────────> Server:22    (direct, always works)
+HTTP:  Browser ──> Cloudflare:443 ────> Server:443   (proxied through CF)
+```
+
+### 3. Cloudflare Setup
+
+1. Add domain to Cloudflare, set DNS A record to server IP (orange cloud = proxied)
+2. SSL/TLS > set mode to **Full (Strict)**
+3. SSL/TLS > Origin Server > **Create Certificate** (15-year validity, free)
+4. Download the Origin Certificate (.pem) and Private Key (.key)
+5. Install on your server:
+   ```bash
+   ./dockweb ssl install-cf yourdomain.com
+   # Choose option 2 (file paths) or 1 (paste content)
+   ```
+6. Recommended Cloudflare settings:
+   - Security > Bot Fight Mode: ON
+   - Speed > Auto Minify: JS, CSS, HTML
+   - Speed > Brotli: ON
+   - Caching > Browser Cache TTL: Respect Existing Headers
+
+### 4. Add Sites and Start
+
+```bash
+# Add your site
+./dockweb site add
+# Domain: yourdomain.com
+# SSL: 1 (Cloudflare)
+
+# Start all services
+./dockweb start
+
+# Verify everything is healthy
+./dockweb status
+```
+
+### 5. Access Admin Tools (via SSH tunnel)
+
+Adminer and Glances are bound to localhost only (not exposed to internet).
+Access them from your laptop through SSH tunnels:
+
+```bash
+# Adminer (database UI) on http://localhost:8888
+ssh -L 8888:localhost:8888 user@your-server-ip
+
+# Glances (system monitoring) on http://localhost:61208
+ssh -L 61208:localhost:61208 user@your-server-ip
+
+# Both at once
+ssh -L 8888:localhost:8888 -L 61208:localhost:61208 user@your-server-ip
+```
+
+Adminer login:
+- Server: `shared_mysql` (pre-filled)
+- Username: `root`
+- Password: (your DB_ROOT_PASSWORD from .env)
+
+### 6. Ongoing Maintenance
+
+```bash
+# Check health
+./dockweb monitor
+
+# View logs
+./dockweb log nginx
+./dockweb log mysql
+
+# Manual backup
+./dockweb backup now
+
+# List backup snapshots
+./dockweb backup list
+
+# Test backup restore (non-destructive)
+./dockweb backup test
+
+# Update Docker images
+./dockweb update
+
+# Switch SSL mode if needed
+./dockweb ssl yourdomain.com letsencrypt   # Switch away from Cloudflare
+./dockweb ssl yourdomain.com cloudflare    # Switch back
+```
+
+### 7. Adding More Sites
+
+```bash
+./dockweb site add
+# Each site gets: own PHP container, own database, own SSL mode
+# Resources auto-calculated based on RAM and number of sites
+```
