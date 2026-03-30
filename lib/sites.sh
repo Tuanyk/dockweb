@@ -45,15 +45,17 @@ cmd_site_add() {
     echo "  SSL Mode:"
     echo "    1) Cloudflare Origin Certificate"
     echo "    2) Let's Encrypt"
-    echo "    3) Local development (HTTP only, no SSL)"
+    echo "    3) Local (HTTP only, serves as $domain)"
+    echo "    4) Dev   (HTTP only, serves as .local domain)"
     echo ""
-    echo -ne "  Choose [1-3]: "
+    echo -ne "  Choose [1-4]: "
     read -r ssl_choice
     local ssl_mode
     case "$ssl_choice" in
         1) ssl_mode="cloudflare" ;;
         2) ssl_mode="letsencrypt" ;;
         3) ssl_mode="local" ;;
+        4) ssl_mode="dev" ;;
         *) log_error "Invalid choice."; return 1 ;;
     esac
 
@@ -71,6 +73,9 @@ cmd_site_add() {
     echo "  ──────────────────────────────────────"
     echo "  Domain:         $domain"
     echo "  SSL Mode:       $ssl_mode"
+    if [[ "$ssl_mode" == "dev" ]]; then
+        echo "  Local Domain:   $(get_local_domain "$domain")  ← add to /etc/hosts"
+    fi
     echo "  PHP Container:  $php_container"
     echo "  Database:       $db_name"
     echo "  DB User:        $db_user"
@@ -153,6 +158,18 @@ CONFEOF
     echo "  DB_USER:     $db_user"
     echo "  DB_PASSWORD: $db_pass"
     echo ""
+    if [[ "$ssl_mode" == "dev" ]]; then
+        local local_domain
+        local_domain=$(get_local_domain "$domain")
+        echo -e "  ${BOLD}Dev /etc/hosts entry:${NC}"
+        echo "  Add this line to /etc/hosts (sudo required):"
+        echo ""
+        echo -e "  ${CYAN}127.0.0.1  ${local_domain} www.${local_domain}${NC}"
+        echo ""
+        echo "  Run: sudo sh -c 'echo \"127.0.0.1  ${local_domain} www.${local_domain}\" >> /etc/hosts'"
+        echo "  Then visit: http://${local_domain}"
+        echo ""
+    fi
 }
 
 cmd_site_remove() {
@@ -286,13 +303,18 @@ generate_nginx_conf() {
         cloudflare)  template="${DOCKWEB_ROOT}/templates/nginx-cloudflare.conf.tpl" ;;
         letsencrypt) template="${DOCKWEB_ROOT}/templates/nginx-letsencrypt.conf.tpl" ;;
         local)       template="${DOCKWEB_ROOT}/templates/nginx-local.conf.tpl" ;;
+        dev)         template="${DOCKWEB_ROOT}/templates/nginx-dev.conf.tpl" ;;
         *)           log_error "Unknown SSL mode: $ssl_mode"; return 1 ;;
     esac
 
     output="${DOCKWEB_ROOT}/nginx/conf.d/${domain}.conf"
 
+    local local_domain
+    local_domain=$(get_local_domain "$domain")
+
     sed \
         -e "s|{{DOMAIN}}|${domain}|g" \
+        -e "s|{{LOCAL_DOMAIN}}|${local_domain}|g" \
         -e "s|{{PHP_CONTAINER}}|${php_container}|g" \
         "$template" > "$output"
 

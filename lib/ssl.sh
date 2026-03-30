@@ -29,7 +29,7 @@ cmd_ssl_menu() {
                 [[ -f "${DOCKWEB_ROOT}/cloudflare-certs/${d}/origin.pem" ]] && cert_status="installed"
             elif [[ "$SSL_MODE" == "letsencrypt" ]]; then
                 [[ -f "${DOCKWEB_ROOT}/certbot/conf/live/${d}/fullchain.pem" ]] && cert_status="installed"
-            elif [[ "$SSL_MODE" == "local" ]]; then
+            elif [[ "$SSL_MODE" == "local" || "$SSL_MODE" == "dev" ]]; then
                 cert_status="n/a (http)"
             fi
             printf "    %d) %-30s %-12s [%s]\n" "$i" "$d" "$SSL_MODE" "$cert_status"
@@ -67,13 +67,15 @@ cmd_ssl_menu() {
                 echo "  New SSL mode:"
                 echo "    1) cloudflare"
                 echo "    2) letsencrypt"
-                echo "    3) local (HTTP only)"
+                echo "    3) local (HTTP only, real domain)"
+                echo "    4) dev   (HTTP only, .local domain)"
                 echo -ne "  Choose: "
                 read -r mode_choice
                 case "$mode_choice" in
                     1) cmd_ssl_switch "$d" "cloudflare" ;;
                     2) cmd_ssl_switch "$d" "letsencrypt" ;;
                     3) cmd_ssl_switch "$d" "local" ;;
+                    4) cmd_ssl_switch "$d" "dev" ;;
                     *) log_error "Invalid." ;;
                 esac
                 ;;
@@ -102,10 +104,13 @@ cmd_ssl_menu() {
             [[ -f "${DOCKWEB_ROOT}/cloudflare-certs/${domain}/origin.pem" ]] && cert_status="installed"
         elif [[ "$SSL_MODE" == "letsencrypt" ]]; then
             [[ -f "${DOCKWEB_ROOT}/certbot/conf/live/${domain}/fullchain.pem" ]] && cert_status="installed"
-        elif [[ "$SSL_MODE" == "local" ]]; then
+        elif [[ "$SSL_MODE" == "local" || "$SSL_MODE" == "dev" ]]; then
             cert_status="n/a (http)"
         fi
         echo "  Cert:     $cert_status"
+        if [[ "$SSL_MODE" == "dev" ]]; then
+            echo "  Local:    http://$(get_local_domain "$domain")"
+        fi
     fi
 }
 
@@ -274,8 +279,8 @@ cmd_ssl_switch() {
         return 1
     fi
 
-    if [[ "$new_mode" != "cloudflare" && "$new_mode" != "letsencrypt" && "$new_mode" != "local" ]]; then
-        log_error "SSL mode must be 'cloudflare', 'letsencrypt', or 'local'."
+    if [[ "$new_mode" != "cloudflare" && "$new_mode" != "letsencrypt" && "$new_mode" != "local" && "$new_mode" != "dev" ]]; then
+        log_error "SSL mode must be 'cloudflare', 'letsencrypt', 'local', or 'dev'."
         return 1
     fi
 
@@ -306,6 +311,14 @@ cmd_ssl_switch() {
     fi
 
     log_success "SSL mode changed to '$new_mode' for $domain."
+
+    if [[ "$new_mode" == "dev" ]]; then
+        local local_domain
+        local_domain=$(get_local_domain "$domain")
+        echo ""
+        log_info "Add to /etc/hosts: 127.0.0.1  ${local_domain} www.${local_domain}"
+        log_info "Visit: http://${local_domain}"
+    fi
 }
 
 update_cloudflare_ips() {

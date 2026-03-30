@@ -61,6 +61,12 @@ sanitize_domain() {
     echo "$1" | sed 's/[.\-]/_/g'
 }
 
+get_local_domain() {
+    # kairoxbuild.com -> kairoxbuild.local
+    # sub.kairoxbuild.com -> sub.kairoxbuild.local
+    echo "${1%.*}.local"
+}
+
 get_site_conf() {
     local domain="$1"
     local conf="${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf"
