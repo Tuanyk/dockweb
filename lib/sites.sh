@@ -304,6 +304,7 @@ generate_nginx_conf() {
         letsencrypt) template="${DOCKWEB_ROOT}/templates/nginx-letsencrypt.conf.tpl" ;;
         local)       template="${DOCKWEB_ROOT}/templates/nginx-local.conf.tpl" ;;
         dev)         template="${DOCKWEB_ROOT}/templates/nginx-dev.conf.tpl" ;;
+        dev-ssl)     template="${DOCKWEB_ROOT}/templates/nginx-dev-ssl.conf.tpl" ;;
         *)           log_error "Unknown SSL mode: $ssl_mode"; return 1 ;;
     esac
 

@@ -16,6 +16,7 @@ certbot/conf/
 certbot/www/
 certbot/logs/
 cloudflare-certs/*/
+local-certs/*/
 
 # Docker
 *.log

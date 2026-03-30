@@ -17,6 +17,7 @@ services:
       - ./nginx/cache:/var/cache/nginx
       - ./cloudflare-certs:/etc/nginx/cloudflare-certs:ro
       - ./nginx/cloudflare-ips.conf:/etc/nginx/cloudflare-ips.conf:ro
+      - ./local-certs:/etc/nginx/local-certs:ro
     depends_on:
       - mysql
     networks:

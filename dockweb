@@ -48,10 +48,11 @@ show_usage() {
     echo "  SSL:"
     echo "    ssl                 SSL management menu"
     echo "    ssl <domain>        Show SSL info for domain"
-    echo "    ssl <domain> <mode> Switch SSL mode (cloudflare|letsencrypt|local|dev)"
-    echo "    ssl install-cf <domain>   Install Cloudflare Origin Cert"
-    echo "    ssl install-le <domain>   Install Let's Encrypt Cert"
-    echo "    ssl update-cf-ips         Update Cloudflare IP ranges"
+    echo "    ssl <domain> <mode> Switch SSL mode (cloudflare|letsencrypt|local|dev|dev-ssl)"
+    echo "    ssl install-cf <domain>      Install Cloudflare Origin Cert"
+    echo "    ssl install-le <domain>      Install Let's Encrypt Cert"
+    echo "    ssl install-local <domain>   Install local dev cert (mkcert)"
+    echo "    ssl update-cf-ips            Update Cloudflare IP ranges"
     echo ""
     echo "  Backup:"
     echo "    backup now          Run backup immediately"
@@ -154,11 +155,12 @@ main() {
             ;;
         ssl)
             case "${2:-}" in
-                "")           cmd_ssl_menu ;;
-                install-cf)   cmd_ssl_install_cf "${3:-}" ;;
-                install-le)   cmd_ssl_install_le "${3:-}" ;;
+                "")            cmd_ssl_menu ;;
+                install-cf)    cmd_ssl_install_cf "${3:-}" ;;
+                install-le)    cmd_ssl_install_le "${3:-}" ;;
+                install-local) cmd_ssl_install_local "${3:-}" ;;
                 update-cf-ips) update_cloudflare_ips ;;
-                *)            cmd_ssl_menu "${2:-}" "${3:-}" ;;
+                *)             cmd_ssl_menu "${2:-}" "${3:-}" ;;
             esac
             ;;
         backup)
