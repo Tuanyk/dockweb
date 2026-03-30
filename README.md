@@ -2,7 +2,7 @@
 
 Multi-site Docker stack: Nginx + PHP-FPM 8.3 + MySQL 8.0 + Redis. Managed by **dockweb** CLI.
 
-Each site gets its own PHP container, database, and SSL mode (Cloudflare, Let's Encrypt, or local HTTP).
+Each site gets its own PHP container, database, and SSL mode (Cloudflare, Let's Encrypt, local HTTP, or local HTTPS with mkcert).
 
 ## Quick Start
 
@@ -19,30 +19,35 @@ nano .env
 # 4. Start everything
 ./dockweb start
 
-# 5. Install SSL certificate (production only)
-./dockweb ssl install-cf example.com   # Cloudflare
-./dockweb ssl install-le example.com   # Let's Encrypt
+# 5. Install SSL certificate
+./dockweb ssl install-cf example.com      # Cloudflare (production)
+./dockweb ssl install-le example.com      # Let's Encrypt (production)
+./dockweb ssl install-local example.com   # mkcert (local dev HTTPS)
 ```
 
 ## Local Development
 
-Test the full stack on your laptop without SSL or Cloudflare:
+Test the full stack on your laptop:
 
 ```bash
-# 1. Add site with "local" SSL mode (option 3 in wizard)
-./dockweb site add
-# Enter domain: mysite.local
-# SSL mode: 3 (local)
-
-# 2. Add domain to /etc/hosts
-echo "127.0.0.1 mysite.local" | sudo tee -a /etc/hosts
-
-# 3. Start and visit http://mysite.local
+# Option A: HTTP only (simple)
+./dockweb site add          # SSL mode: dev
 ./dockweb start
+# Visit http://mysite.local
+
+# Option B: HTTPS with trusted cert (for Firebase Auth, OAuth, etc.)
+./dockweb site add          # SSL mode: dev-ssl
+./dockweb start
+# Visit https://mysite.local
+
+# Add domain to /etc/hosts
+echo "127.0.0.1 mysite.local" | sudo tee -a /etc/hosts
 
 # When ready for production, switch SSL mode:
 ./dockweb ssl mysite.com cloudflare
 ```
+
+Local HTTPS requires [mkcert](https://github.com/FiloSottile/mkcert). Install with `sudo apt install mkcert && mkcert -install`.
 
 ## dockweb Commands
 
@@ -63,11 +68,18 @@ Sites:
   dockweb site remove <domain>
 
 SSL:
-  dockweb ssl                 SSL management menu
-  dockweb ssl <domain> <mode> Switch mode (cloudflare|letsencrypt|local)
-  dockweb ssl install-cf <d>  Install Cloudflare Origin Certificate
-  dockweb ssl install-le <d>  Install Let's Encrypt certificate
-  dockweb ssl update-cf-ips   Refresh Cloudflare IP ranges
+  dockweb ssl                    SSL management menu
+  dockweb ssl <domain> <mode>    Switch mode (cloudflare|letsencrypt|local|dev|dev-ssl)
+  dockweb ssl install-cf <d>     Install Cloudflare Origin Certificate
+  dockweb ssl install-le <d>     Install Let's Encrypt certificate
+  dockweb ssl install-local <d>  Install local dev cert (mkcert)
+  dockweb ssl update-cf-ips      Refresh Cloudflare IP ranges
+
+Config:
+  dockweb config                 Show all settings
+  dockweb config backup          Edit backup schedule & retention
+  dockweb config passwords       Edit passwords & credentials
+  dockweb config resources       Edit resource limits (MySQL, PHP, Redis)
 
 Backup:
   dockweb backup now          Run backup immediately
@@ -106,7 +118,7 @@ Internet -> Cloudflare (CDN/WAF/SSL) -> Server:443 -> Nginx -> PHP-FPM -> MySQL
 | PHP-FPM 8.3 | One container per site (isolated) |
 | MySQL 8.4 | Shared database, per-site users |
 | Redis | Shared cache (sessions, objects) |
-| Restic | Daily backup at 03:00 (7d/4w/6m retention) |
+| Restic | Scheduled backup (configurable via `dockweb config backup`) |
 | Fail2Ban | Auto-ban malicious IPs |
 | Certbot | Let's Encrypt auto-renewal |
 | Adminer | Database UI (localhost:8888, SSH tunnel) |
@@ -123,7 +135,8 @@ docker-compose.sites.yml   Auto-generated PHP containers
 nginx/conf.d/        Per-site nginx configs (auto-generated)
 sites/<domain>/      Website files (managed separately)
 cloudflare-certs/    Origin certificates
-.env                 Passwords and settings
+local-certs/         Local dev certificates (mkcert)
+.env                 Passwords, backup, and resource settings
 ```
 
 ## Server Requirements
@@ -149,9 +162,8 @@ cd docker-web2
 # Choose option 1 (Everything) for fresh server
 
 # Generate and set secure passwords
-openssl rand -base64 32   # Use for DB_ROOT_PASSWORD
-openssl rand -base64 32   # Use for RESTIC_PASSWORD
-nano .env
+./dockweb config passwords    # Interactive password setup
+# Or manually: nano .env
 ```
 
 ### 2. Configure Firewall

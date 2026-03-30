@@ -44,7 +44,9 @@ load_env() {
     local env_file="${DOCKWEB_ROOT}/.env"
     if [[ -f "$env_file" ]]; then
         set -a
+        set -f  # disable glob expansion
         source <(grep -v '^\s*#' "$env_file" | grep -v '^\s*$')
+        set +f
         set +a
     fi
 }

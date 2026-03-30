@@ -6,12 +6,14 @@ RUN apk add --no-cache restic mariadb-client bash
 # Create directories
 RUN mkdir -p /backups /sites /scripts
 
-# Copy backup script
+# Copy scripts
 COPY backup.sh /scripts/backup.sh
-RUN chmod +x /scripts/backup.sh
+COPY entrypoint.sh /scripts/entrypoint.sh
+RUN chmod +x /scripts/backup.sh /scripts/entrypoint.sh
 
-# Setup Crontab (Run at 03:00 AM every day)
-RUN echo "0 3 * * * /scripts/backup.sh >> /var/log/backup.log 2>&1" > /etc/crontabs/root
+# Copy test restore if exists
+COPY test-restore.sh /scripts/test-restore.sh
+RUN chmod +x /scripts/test-restore.sh 2>/dev/null || true
 
-# Entrypoint: Start crond in foreground
-CMD ["crond", "-f", "-d", "8"]
+# Entrypoint: configure cron from env, then start crond
+CMD ["/scripts/entrypoint.sh"]

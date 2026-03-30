@@ -85,7 +85,7 @@ services:
     image: redis:alpine
     container_name: shared_redis
     restart: unless-stopped
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save 60 1000 --appendonly yes
+    command: redis-server --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru --save 60 1000 --appendonly yes
     volumes:
       - redis-data:/data
     networks:
@@ -121,6 +121,11 @@ services:
       DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-secret}
       RESTIC_PASSWORD: ${RESTIC_PASSWORD:-change_this_secure_password}
       ALERT_EMAIL: ${ALERT_EMAIL:-}
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 3 * * *}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-7}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-4}
+      BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-6}
     volumes:
       - ./sites:/var/www/sites:ro             # Read-only access to source files
       - ./backups:/backups            # Destination for backup repo

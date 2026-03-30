@@ -71,9 +71,11 @@ if [ $? -ne 0 ]; then
 fi
 
 # 6. Prune Old Backups (Retention Policy)
-# Keep last 7 days, 4 weeks, and 6 months
-echo "Pruning old backups..."
-restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
+KEEP_DAILY="${BACKUP_KEEP_DAILY:-7}"
+KEEP_WEEKLY="${BACKUP_KEEP_WEEKLY:-4}"
+KEEP_MONTHLY="${BACKUP_KEEP_MONTHLY:-6}"
+echo "Pruning old backups (keep: ${KEEP_DAILY}d/${KEEP_WEEKLY}w/${KEEP_MONTHLY}m)..."
+restic forget --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --keep-monthly "$KEEP_MONTHLY" --prune
 
 # 7. Clean up
 rm /tmp/all_databases.sql
