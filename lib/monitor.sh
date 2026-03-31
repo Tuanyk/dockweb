@@ -58,7 +58,7 @@ cmd_monitor() {
 }
 
 cmd_log() {
-    local service="$1"
+    local service="${1:-}"
 
     if [[ -z "$service" ]]; then
         header "View Logs"
