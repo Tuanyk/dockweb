@@ -166,7 +166,7 @@ sites/<domain>/              Website files (untracked, your own git repos)
 ### 1. Clone and setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/dockweb.git
+git clone https://github.com/Tuanyk/dockweb.git
 cd dockweb
 cp .env.example .env
 ./dockweb setup        # installs Docker, firewall, swap, kernel tuning
