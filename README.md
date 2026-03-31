@@ -4,7 +4,7 @@
 
 ![dockweb demo](demo.gif)
 
-**Nginx + PHP-FPM 8.3 + MySQL 8.0 + Redis.** Each site gets its own PHP container, database, and SSL configuration. Works on production VPS and local dev machine.
+**Nginx + PHP-FPM 8.3 + MySQL 8.4 + Redis.** Each site gets its own PHP container, database, and SSL configuration. Works on production VPS and local dev machine.
 
 ---
 
