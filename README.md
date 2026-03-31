@@ -8,15 +8,26 @@
 
 ## Why dockweb?
 
-Setting up a VPS to host multiple PHP sites usually means:
-- Writing docker-compose files from scratch every time
-- Manually wiring up Nginx configs, PHP containers, databases
-- Figuring out SSL for each site separately
-- No standard way to add a second (or tenth) site
+I'm a freelancer. Every time a client needed a PHP site hosted, I'd spin up a VPS and do the same thing over and over:
 
-dockweb solves this with a CLI wizard. One command to add a site — it creates the PHP container, Nginx config, database, and user automatically. SSL modes (Cloudflare, Let's Encrypt, local mkcert) switch with one command.
+1. Write a `docker-compose.yml` from scratch
+2. Write an Nginx config, get the `fastcgi_pass` and `server_name` right
+3. Create a MySQL database and user with proper permissions
+4. Figure out SSL — Cloudflare origin cert? Let's Encrypt? Copy-paste from the last project?
+5. Set up backups, monitoring, fail2ban...
+6. Client needs a second site? Do it all again on the same server, but now worry about conflicts
 
-**vs Coolify / CapRover:** Those are full platforms with web UIs. dockweb is a shell script you own and understand, with no extra services running.
+After the fifth or sixth time, I automated it. That's dockweb.
+
+**One command to add a site.** It creates the PHP container, Nginx config, database, user, and SSL — all wired up. Need a second site? Run the same command. Resources auto-scale based on your server's RAM.
+
+### vs writing docker-compose yourself
+
+You *can* do everything dockweb does manually. But you'll spend hours on each server, and the setup won't be consistent across projects. dockweb gives you a production-ready stack with security hardening (rate limiting, Fail2Ban, Cloudflare IP allowlisting), automated backups with restore testing, and health monitoring — all preconfigured.
+
+### vs Coolify / CapRover / Dokku
+
+Those are full platforms with web UIs, background services, and their own update cycles. If one breaks, you're debugging *their* stack on top of yours. dockweb is a single shell script — no daemon, no web UI, no database of its own. You can read every line of it. If something breaks, it's just Docker and Nginx underneath.
 
 ---
 
