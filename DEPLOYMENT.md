@@ -34,11 +34,11 @@ IDENTIFIED BY 'CHANGE_THIS_PASSWORD_123'
 
 Update `init-letsencrypt.sh`:
 ```bash
-domains=(kairoxbuild.com www.kairoxbuild.com)  # Change to your domains
+domains=(example.com www.example.com)  # Change to your domains
 email="your-email@example.com"
 ```
 
-Update `nginx/conf.d/kairoxbuild.com.conf`:
+Update `nginx/conf.d/example.com.conf`:
 - Change `server_name` to your domain
 - Update paths if needed
 
@@ -148,13 +148,13 @@ docker exec -it shared_mysql mysql -u root -p
 SELECT User, Host FROM mysql.user;
 
 # Test connection with app user
-mysql -h localhost -u kairoxbuild_user -p kairoxbuild_db
+mysql -h localhost -u mysite_user -p mysite_db
 ```
 
 Update your application config to use:
 - Host: `shared_mysql` (from within containers) or `localhost:3306` (from host)
-- Database: `kairoxbuild_db`
-- User: `kairoxbuild_user`
+- Database: `mysite_db`
+- User: `mysite_user`
 - Password: (the one you set in `mysql/init/01-create-users.sql`)
 
 ## Post-Deployment
@@ -209,7 +209,7 @@ docker stats
 ```bash
 tail -f logs/nginx/error.log
 tail -f logs/mysql/error.log
-docker-compose logs -f php_kairoxbuild
+docker-compose logs -f php_yoursite
 ```
 
 **Clear FastCGI cache:**
@@ -220,7 +220,7 @@ docker exec gateway_nginx rm -rf /var/cache/nginx/*
 **Deploy code changes:**
 ```bash
 # Since opcache.validate_timestamps=0, restart PHP containers:
-docker-compose restart php_kairoxbuild
+docker-compose restart php_yoursite
 ```
 
 **Update containers:**
@@ -288,7 +288,7 @@ docker-compose up -d --build <container_name>
 docker exec shared_mysql mysql -u root -p -e "SHOW PROCESSLIST;"
 
 # Check PHP-FPM status
-docker exec php_kairoxbuild ps aux | grep php-fpm
+docker exec php_yoursite ps aux | grep php-fpm
 
 # Monitor with Glances
 # Access via SSH tunnel: http://localhost:61208
@@ -318,7 +318,7 @@ PHP_CONTAINER_COUNT=3  # Increment
 
 3. **Create Nginx config:**
 ```bash
-cp nginx/conf.d/kairoxbuild.com.conf nginx/conf.d/newsite.com.conf
+cp nginx/conf.d/example.com.conf nginx/conf.d/newsite.com.conf
 # Edit and update server_name, root path, fastcgi_pass
 ```
 

@@ -64,8 +64,8 @@ sanitize_domain() {
 }
 
 get_local_domain() {
-    # kairoxbuild.com -> kairoxbuild.local
-    # sub.kairoxbuild.com -> sub.kairoxbuild.local
+    # example.com -> example.local
+    # sub.example.com -> sub.example.local
     echo "${1%.*}.local"
 }
 

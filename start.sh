@@ -9,7 +9,7 @@ fi
 
 # Ensure all required directories exist
 echo "Creating required directories..."
-mkdir -p logs/nginx logs/mysql logs/php/kairoxbuild.com logs/modsecurity
+mkdir -p logs/nginx logs/mysql logs/modsecurity
 mkdir -p backups certbot/conf certbot/www certbot/logs
 mkdir -p nginx/cache mysql/data mysql/init monitoring
 
@@ -58,7 +58,7 @@ echo "Max Children per PHP Container: $PHP_PM_MAX_CHILDREN"
 echo ""
 
 # 4. Check if SSL certificates exist
-if [ ! -f "certbot/conf/live/kairoxbuild.com/fullchain.pem" ]; then
+if ! ls certbot/conf/live/*/fullchain.pem &>/dev/null; then
     echo "⚠️  WARNING: SSL certificates not found!"
     echo ""
     echo "After services start, run: ./init-letsencrypt.sh"

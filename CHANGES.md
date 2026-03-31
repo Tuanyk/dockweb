@@ -15,7 +15,7 @@ This document lists all improvements made to the Docker Web Server stack.
 
 **Files modified:**
 - `docker-compose.yml` - Added certbot service
-- `nginx/conf.d/kairoxbuild.com.conf` - Complete SSL configuration
+- `nginx/conf.d/yoursite.conf` - Complete SSL configuration
 - `init-letsencrypt.sh` - New file
 
 ### ✅ Rate Limiting
@@ -28,7 +28,7 @@ This document lists all improvements made to the Docker Web Server stack.
 
 **Files modified:**
 - `nginx/nginx.conf` - Rate limiting zones
-- `nginx/conf.d/kairoxbuild.com.conf` - Applied rate limits
+- `nginx/conf.d/yoursite.conf` - Applied rate limits
 
 ### ✅ MySQL Security
 - **Reduced:** max_connections from 500 to 150
@@ -70,7 +70,7 @@ This document lists all improvements made to the Docker Web Server stack.
 
 **Files modified:**
 - `nginx/nginx.conf:28-34` - Cache configuration
-- `nginx/conf.d/kairoxbuild.com.conf:87-90` - Cache usage
+- `nginx/conf.d/yoursite.conf:87-90` - Cache usage
 - `docker-compose.yml:35` - Cache volume mount
 
 ### ✅ Redis Configuration
@@ -89,7 +89,7 @@ This document lists all improvements made to the Docker Web Server stack.
 - **Expected:** 60-90% reduction in static file requests
 
 **Files modified:**
-- `nginx/conf.d/kairoxbuild.com.conf:54-63` - Static file caching
+- `nginx/conf.d/yoursite.conf:54-63` - Static file caching
 
 ### ✅ PHP Opcache Optimization
 - **Changed:** opcache.validate_timestamps from 1 to 0
@@ -112,7 +112,7 @@ This document lists all improvements made to the Docker Web Server stack.
 **Files modified:**
 - `docker-compose.yml` - Health checks for all services
 - `php/Dockerfile:54-58` - PHP healthcheck script installation
-- `nginx/conf.d/kairoxbuild.com.conf:47-51` - /health endpoint
+- `nginx/conf.d/yoursite.conf:47-51` - /health endpoint
 
 ### ✅ Resource Limits
 - **Added:** CPU and memory limits for all containers:
@@ -227,7 +227,7 @@ This document lists all improvements made to the Docker Web Server stack.
 - Added FastCGI cache configuration
 - Added client_body_buffer_size tuning
 
-### nginx/conf.d/kairoxbuild.com.conf
+### nginx/conf.d/yoursite.conf
 - Complete rewrite with:
   - HTTP to HTTPS redirect
   - Full SSL configuration
@@ -294,7 +294,7 @@ This document lists all improvements made to the Docker Web Server stack.
 
 - `docker-compose.yml` - Major updates, +150 lines
 - `nginx/nginx.conf` - Rate limiting + FastCGI cache
-- `nginx/conf.d/kairoxbuild.com.conf` - Complete rewrite
+- `nginx/conf.d/yoursite.conf` - Complete rewrite
 - `php/local.ini` - Opcache optimization
 - `php/Dockerfile` - Healthcheck script
 - `backup/backup.sh` - Verification + alerts

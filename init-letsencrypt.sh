@@ -11,8 +11,8 @@ if [ -f .env ]; then
 fi
 
 # Configuration
-domains=(kairoxbuild.com www.kairoxbuild.com)  # Add your domains here
-email="${CERTBOT_EMAIL:-admin@kairoxbuild.com}"  # Set your email
+domains=(example.com www.example.com)  # Change to your domains
+email="${CERTBOT_EMAIL:-your-email@example.com}"  # Set your email
 staging=0  # Set to 1 for testing to avoid rate limits
 
 echo "### Initializing Let's Encrypt SSL Certificates ###"
