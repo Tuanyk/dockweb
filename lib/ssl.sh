@@ -129,6 +129,131 @@ cmd_ssl_menu() {
     fi
 }
 
+_get_base_domain() {
+    # example.com from sub.example.com, or example.com from example.com
+    echo "$1" | awk -F. '{print $(NF-1)"."$NF}'
+}
+
+_extract_json_value() {
+    # Lightweight JSON value extraction without jq dependency
+    # Usage: _extract_json_value "key" <<< "$json"
+    local key="$1"
+    grep -o "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed "s/\"${key}\"[[:space:]]*:[[:space:]]*\"//" | sed 's/"$//'
+}
+
+_extract_json_bool() {
+    local key="$1"
+    grep -o "\"${key}\"[[:space:]]*:[[:space:]]*[a-z]*" | head -1 | sed "s/\"${key}\"[[:space:]]*:[[:space:]]*//"
+}
+
+cloudflare_api_install_cert() {
+    local domain="$1"
+    local cert_dir="$2"
+
+    load_env
+
+    if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+        log_error "CLOUDFLARE_API_TOKEN not set in .env"
+        log_info "Get your Origin CA Key from: https://dash.cloudflare.com/profile/api-tokens"
+        return 1
+    fi
+
+    local base_domain
+    base_domain=$(_get_base_domain "$domain")
+
+    # Auto-detect zone ID if not set
+    local zone_id="${CLOUDFLARE_ZONE_ID:-}"
+    if [[ -z "$zone_id" ]]; then
+        log_info "Zone ID not set, auto-detecting for ${base_domain}..."
+        local zone_response
+        zone_response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${base_domain}" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json")
+
+        local zone_success
+        zone_success=$(echo "$zone_response" | _extract_json_bool "success")
+        if [[ "$zone_success" != "true" ]]; then
+            log_error "Failed to query Cloudflare zones API."
+            log_info "You may need to set CLOUDFLARE_ZONE_ID manually in .env"
+            return 1
+        fi
+
+        zone_id=$(echo "$zone_response" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
+        if [[ -z "$zone_id" ]]; then
+            log_error "Could not find zone for ${base_domain}."
+            log_info "Set CLOUDFLARE_ZONE_ID manually in .env"
+            return 1
+        fi
+        log_success "Found zone ID: ${zone_id}"
+    fi
+
+    # Generate private key and CSR locally
+    log_info "Generating private key and CSR..."
+    local key_file="${cert_dir}/origin.key"
+    local csr_file="${cert_dir}/origin.csr"
+
+    openssl genrsa -out "$key_file" 2048 2>/dev/null
+    openssl req -new -key "$key_file" -out "$csr_file" \
+        -subj "/CN=${domain}" 2>/dev/null
+
+    local csr_content
+    csr_content=$(cat "$csr_file")
+
+    # Escape CSR for JSON (newlines to \n)
+    local csr_escaped
+    csr_escaped=$(echo "$csr_content" | awk '{printf "%s\\n", $0}')
+
+    # Request origin certificate from Cloudflare (15-year validity)
+    log_info "Requesting origin certificate from Cloudflare..."
+    local api_response
+    api_response=$(curl -s -X POST "https://api.cloudflare.com/client/v4/certificates" \
+        -H "X-Auth-User-Service-Key: ${CLOUDFLARE_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        --data "{
+            \"hostnames\": [\"${domain}\", \"*.${domain}\"],
+            \"requested_validity\": 5475,
+            \"request_type\": \"origin-rsa\",
+            \"csr\": \"${csr_escaped}\"
+        }")
+
+    # Check success
+    local api_success
+    api_success=$(echo "$api_response" | _extract_json_bool "success")
+    if [[ "$api_success" != "true" ]]; then
+        local error_msg
+        error_msg=$(echo "$api_response" | grep -o '"message":"[^"]*"' | head -1 | sed 's/"message":"//;s/"//')
+        log_error "Cloudflare API error: ${error_msg:-unknown error}"
+        log_info "Tip: Origin CA certificates require the Origin CA Key, not a regular API token."
+        log_info "Find it at: https://dash.cloudflare.com/profile/api-tokens > Origin CA Key"
+        rm -f "$csr_file"
+        return 1
+    fi
+
+    # Extract certificate from response
+    local cert_content
+    cert_content=$(echo "$api_response" | grep -o '"certificate":"[^"]*"' | head -1 | sed 's/"certificate":"//;s/"$//')
+
+    if [[ -z "$cert_content" ]]; then
+        log_error "Could not extract certificate from API response."
+        rm -f "$csr_file"
+        return 1
+    fi
+
+    # Convert escaped newlines back to real newlines
+    echo -e "$cert_content" > "${cert_dir}/origin.pem"
+
+    # Clean up CSR
+    rm -f "$csr_file"
+
+    chmod 644 "${cert_dir}/origin.pem"
+    chmod 600 "${cert_dir}/origin.key"
+
+    log_success "Origin certificate generated and installed!"
+    log_info "  Cert: cloudflare-certs/${domain}/origin.pem"
+    log_info "  Key:  cloudflare-certs/${domain}/origin.key"
+    log_info "  Valid for: 15 years"
+}
+
 cmd_ssl_install_cf() {
     local domain="${1:-}"
     if [[ -z "$domain" ]]; then
@@ -146,19 +271,42 @@ cmd_ssl_install_cf() {
     local cert_dir="${DOCKWEB_ROOT}/cloudflare-certs/${domain}"
     mkdir -p "$cert_dir"
 
+    load_env
+    local has_api="false"
+    [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] && has_api="true"
+
     echo ""
-    echo "  Go to Cloudflare Dashboard > SSL/TLS > Origin Server"
-    echo "  Click 'Create Certificate' and download both files."
-    echo ""
-    echo "  How to provide the certificate:"
-    echo "    1) Paste certificate content"
-    echo "    2) Provide file paths"
-    echo ""
-    echo -ne "  Choose [1-2]: "
+    if [[ "$has_api" == "true" ]]; then
+        echo "  How to provide the certificate:"
+        echo "    1) Auto-generate via Cloudflare API (recommended)"
+        echo "    2) Paste certificate content"
+        echo "    3) Provide file paths"
+        echo ""
+        echo -ne "  Choose [1-3]: "
+    else
+        echo -e "  ${DIM}Tip: Set CLOUDFLARE_API_TOKEN in .env to auto-generate certs${NC}"
+        echo ""
+        echo "  Go to Cloudflare Dashboard > SSL/TLS > Origin Server"
+        echo "  Click 'Create Certificate' and download both files."
+        echo ""
+        echo "  How to provide the certificate:"
+        echo "    1) Paste certificate content"
+        echo "    2) Provide file paths"
+        echo ""
+        echo -ne "  Choose [1-2]: "
+    fi
     read -r method
+
+    # Normalize: if no API token, shift choices so 1->paste, 2->file
+    if [[ "$has_api" == "false" ]]; then
+        method=$((method + 1))
+    fi
 
     case "$method" in
         1)
+            cloudflare_api_install_cert "$domain" "$cert_dir" || return 1
+            ;;
+        2)
             echo ""
             echo "  Paste the Origin Certificate PEM (end with empty line):"
             local cert_content=""
@@ -175,8 +323,12 @@ cmd_ssl_install_cf() {
                 key_content+="${line}"$'\n'
             done
             echo "$key_content" > "${cert_dir}/origin.key"
+
+            chmod 644 "${cert_dir}/origin.pem"
+            chmod 600 "${cert_dir}/origin.key"
+            log_success "Certificate installed at: cloudflare-certs/${domain}/"
             ;;
-        2)
+        3)
             echo -ne "  Path to origin.pem: "
             read -r cert_path
             echo -ne "  Path to origin.key: "
@@ -187,17 +339,16 @@ cmd_ssl_install_cf() {
             fi
             cp "$cert_path" "${cert_dir}/origin.pem"
             cp "$key_path" "${cert_dir}/origin.key"
+
+            chmod 644 "${cert_dir}/origin.pem"
+            chmod 600 "${cert_dir}/origin.key"
+            log_success "Certificate installed at: cloudflare-certs/${domain}/"
             ;;
         *)
             log_error "Invalid choice."
             return 1
             ;;
     esac
-
-    chmod 644 "${cert_dir}/origin.pem"
-    chmod 600 "${cert_dir}/origin.key"
-
-    log_success "Certificate installed at: cloudflare-certs/${domain}/"
 
     # Reload nginx if running
     if docker exec gateway_nginx nginx -t 2>/dev/null; then
