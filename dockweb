@@ -61,6 +61,9 @@ show_usage() {
     echo "    backup restore      Restore from backup"
     echo "    backup test         Test backup restore"
     echo ""
+    echo "  Cache:"
+    echo "    opcache-clear [domain]  Clear PHP OPcache (all sites if no domain)"
+    echo ""
     echo "  Monitoring:"
     echo "    log [service]       View service logs"
     echo "    monitor             Show health status"
@@ -95,9 +98,12 @@ show_menu() {
         echo "    8) Manage SSL          16) Server setup"
         echo "                           17) Configuration"
         echo ""
+        echo -e "  ${BOLD}Cache${NC}"
+        echo "    18) Clear OPcache"
+        echo ""
         echo "    0) Exit"
         echo ""
-        echo -ne "  Choose [0-17]: "
+        echo -ne "  Choose [0-18]: "
         read -r choice
 
         case "$choice" in
@@ -118,6 +124,7 @@ show_menu() {
             15) cmd_update ;;
             16) cmd_setup ;;
             17) cmd_config ;;
+            18) menu_opcache_clear ;;
             0)  echo ""; log_info "Bye!"; exit 0 ;;
             *)  log_error "Invalid choice." ;;
         esac
@@ -180,6 +187,9 @@ main() {
                 test)    cmd_backup_test ;;
                 *)       log_error "Usage: dockweb backup {now|list|restore|test}" ;;
             esac
+            ;;
+        opcache-clear)
+            cmd_opcache_clear "${2:-}"
             ;;
         log)
             cmd_log "${2:-}"

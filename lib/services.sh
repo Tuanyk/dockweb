@@ -119,6 +119,78 @@ cmd_update() {
     $cmd ps
 }
 
+cmd_opcache_clear() {
+    local domain="${1:-}"
+
+    # USR2 gracefully reloads PHP-FPM workers, clearing opcache
+    # This is zero-downtime — active requests finish before workers restart
+    _clear_opcache_for() {
+        local site="$1"
+        if get_site_conf "$site"; then
+            if docker exec "$PHP_CONTAINER" kill -USR2 1 2>/dev/null; then
+                log_success "${site} — OPcache cleared (PHP-FPM reloaded)"
+                return 0
+            else
+                log_error "${site} — failed (container not running?)"
+                return 1
+            fi
+        else
+            log_error "Site not found: ${site}"
+            return 1
+        fi
+    }
+
+    if [[ -z "$domain" ]]; then
+        header "Clearing OPcache (all sites)"
+        local sites
+        sites=$(list_all_sites)
+        if [[ -z "$sites" ]]; then
+            log_error "No sites configured."
+            return 1
+        fi
+        local failed=0
+        while IFS= read -r site; do
+            [[ -z "$site" ]] && continue
+            _clear_opcache_for "$site" || failed=1
+        done <<< "$sites"
+        [[ $failed -eq 0 ]] && log_success "All sites cleared."
+    else
+        header "Clearing OPcache: ${domain}"
+        _clear_opcache_for "$domain"
+    fi
+}
+
+menu_opcache_clear() {
+    local sites
+    sites=$(list_all_sites)
+    if [[ -z "$sites" ]]; then
+        log_error "No sites configured."
+        return 1
+    fi
+
+    header "Clear OPcache"
+    echo "    0) All sites"
+    local i=1
+    local site_arr=()
+    while IFS= read -r site; do
+        [[ -z "$site" ]] && continue
+        echo "    ${i}) ${site}"
+        site_arr+=("$site")
+        ((i++))
+    done <<< "$sites"
+    echo ""
+    echo -ne "  Choose [0-$((i-1))]: "
+    read -r choice
+
+    if [[ "$choice" == "0" ]]; then
+        cmd_opcache_clear
+    elif [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#site_arr[@]} )); then
+        cmd_opcache_clear "${site_arr[$((choice-1))]}"
+    else
+        log_error "Invalid choice."
+    fi
+}
+
 calculate_resources() {
     local total_ram available_ram reserved_ram=800
     local num_sites mysql_ram total_php_ram ram_per_container calculated_children
