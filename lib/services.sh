@@ -31,6 +31,21 @@ cmd_start() {
         mkdir -p "${DOCKWEB_ROOT}/sites/${domain}/public"
     done <<< "$sites"
 
+    # Fix ownership of directories the script needs to write to
+    # (in case they were created by Docker or a previous sudo run)
+    local current_user
+    current_user=$(id -un)
+    for dir in "${DOCKWEB_ROOT}/nginx/conf.d" \
+               "${DOCKWEB_ROOT}/nginx/cache" \
+               "${DOCKWEB_ROOT}/logs" \
+               "${DOCKWEB_ROOT}/cloudflare-certs"; do
+        if [[ -d "$dir" ]] && [[ ! -w "$dir" ]]; then
+            log_warn "Fixing ownership of ${dir} (not writable by ${current_user})..."
+            sudo chown -R "${current_user}:${current_user}" "$dir" 2>/dev/null \
+                || log_warn "Could not fix ${dir} — you may need to run: sudo chown -R ${current_user} ${dir}"
+        fi
+    done
+
     # Make scripts executable
     chmod +x "${DOCKWEB_ROOT}/backup/backup.sh" \
              "${DOCKWEB_ROOT}/backup/test-restore.sh" \
