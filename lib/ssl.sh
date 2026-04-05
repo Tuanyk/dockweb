@@ -152,9 +152,12 @@ cloudflare_api_install_cert() {
 
     load_env
 
-    if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-        log_error "CLOUDFLARE_API_TOKEN not set in .env"
-        log_info "Get your Origin CA Key from: https://dash.cloudflare.com/profile/api-tokens"
+    # Origin CA Key is required for the certificates API (different from regular API token)
+    local origin_ca_key="${CLOUDFLARE_ORIGIN_CA_KEY:-${CLOUDFLARE_API_TOKEN:-}}"
+    if [[ -z "$origin_ca_key" ]]; then
+        log_error "CLOUDFLARE_ORIGIN_CA_KEY not set in .env"
+        log_info "Get it from: https://dash.cloudflare.com/profile/api-tokens > Origin CA Key"
+        log_info "(This is different from a regular API token)"
         return 1
     fi
 
@@ -204,10 +207,12 @@ cloudflare_api_install_cert() {
     csr_escaped=$(echo "$csr_content" | awk '{printf "%s\\n", $0}')
 
     # Request origin certificate from Cloudflare (15-year validity)
+    # The /certificates endpoint requires the Origin CA Key via X-Auth-User-Service-Key,
+    # NOT a regular API token with Bearer auth.
     log_info "Requesting origin certificate from Cloudflare..."
     local api_response
     api_response=$(curl -s -X POST "https://api.cloudflare.com/client/v4/certificates" \
-        -H "X-Auth-User-Service-Key: ${CLOUDFLARE_API_TOKEN}" \
+        -H "X-Auth-User-Service-Key: ${origin_ca_key}" \
         -H "Content-Type: application/json" \
         --data "{
             \"hostnames\": [\"${domain}\", \"*.${domain}\"],
