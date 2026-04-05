@@ -73,6 +73,40 @@ server {
         log_not_found off;
     }
 
+    # WordPress/PHP cache bypass rules
+    # Skip cache for: logged-in users, commenters, WooCommerce, POST, query strings
+    set $skip_cache 0;
+
+    # POST requests
+    if ($request_method = POST) {
+        set $skip_cache 1;
+    }
+
+    # URLs with query strings (dynamic content)
+    if ($query_string != "") {
+        set $skip_cache 1;
+    }
+
+    # WordPress logged-in cookies
+    if ($http_cookie ~* "wordpress_logged_in_|wp-postpass_|comment_author_") {
+        set $skip_cache 1;
+    }
+
+    # WooCommerce cookies
+    if ($http_cookie ~* "woocommerce_cart_hash|woocommerce_items_in_cart|wp_woocommerce_session_") {
+        set $skip_cache 1;
+    }
+
+    # WordPress-specific URLs that should never be cached
+    if ($request_uri ~* "/wp-admin/|/wp-json/|/xmlrpc.php|wp-.*.php|/feed/|index.php|sitemap(_index)?.xml") {
+        set $skip_cache 1;
+    }
+
+    # WooCommerce dynamic pages
+    if ($request_uri ~* "/cart/|/checkout/|/my-account/|/addons|/add-to-cart") {
+        set $skip_cache 1;
+    }
+
     # Main location block
     location / {
         try_files $uri $uri/ /index.php?$query_string;
@@ -87,10 +121,10 @@ server {
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
 
-        # FastCGI Cache
+        # FastCGI Cache (WordPress-aware)
         fastcgi_cache PHPCACHE;
-        fastcgi_cache_bypass $http_pragma $http_authorization;
-        fastcgi_no_cache $http_pragma $http_authorization;
+        fastcgi_cache_bypass $skip_cache $http_pragma $http_authorization;
+        fastcgi_no_cache $skip_cache $http_pragma $http_authorization;
         add_header X-FastCGI-Cache $upstream_cache_status;
 
         # Performance tuning
@@ -116,9 +150,14 @@ server {
             include fastcgi_params;
             fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
 
-            # Disable cache for admin areas
+            # Always bypass cache for admin areas
             fastcgi_cache_bypass 1;
             fastcgi_no_cache 1;
         }
+    }
+
+    # WordPress uploads — deny PHP execution (security)
+    location ~* /wp-content/uploads/.*\.php$ {
+        deny all;
     }
 }
