@@ -140,14 +140,21 @@ CONFEOF
         log_info "Start services first, then run: dockweb ssl install-le $domain"
     fi
 
-    # Step 11: Restart if running
+    # Step 11: Start new container if stack is already running
     if is_running; then
         echo ""
-        log_info "Rebuilding containers..."
         local cmd
         cmd="$(docker_compose_cmd)"
-        $cmd up -d --build
+        local service_name
+        service_name=$(sanitize_domain "$domain")
+        log_info "Starting PHP container for ${domain}..."
+        # --no-deps: don't restart mysql/redis, just the new site container
+        # --build: uses cached image layers if Dockerfile unchanged (fast)
+        $cmd up -d --no-deps --build "$service_name"
         docker exec gateway_nginx nginx -s reload 2>/dev/null || true
+        log_success "PHP container started."
+    else
+        log_info "Run 'dockweb start' to bring up all services."
     fi
 
     # Step 12: Summary

@@ -371,7 +371,7 @@ cmd_opcache_clear() {
     }
 
     if [[ -z "$domain" ]]; then
-        header "Clearing OPcache (all sites)"
+        header "Clearing caches (all sites)"
         local sites
         sites=$(list_all_sites)
         if [[ -z "$sites" ]]; then
@@ -383,11 +383,21 @@ cmd_opcache_clear() {
             [[ -z "$site" ]] && continue
             _clear_opcache_for "$site" || failed=1
         done <<< "$sites"
-        [[ $failed -eq 0 ]] && log_success "All sites cleared."
+        # Clear nginx FastCGI cache for all sites
+        _purge_nginx_cache
+        [[ $failed -eq 0 ]] && log_success "All caches cleared (OPcache + nginx)."
     else
-        header "Clearing OPcache: ${domain}"
+        header "Clearing caches: ${domain}"
         _clear_opcache_for "$domain"
+        _purge_nginx_cache
     fi
+}
+
+# Purge nginx FastCGI cache and reload
+_purge_nginx_cache() {
+    docker exec gateway_nginx sh -c 'rm -rf /var/cache/nginx/*' 2>/dev/null || true
+    docker exec gateway_nginx nginx -s reload 2>/dev/null || true
+    log_success "Nginx FastCGI cache purged."
 }
 
 menu_opcache_clear() {
