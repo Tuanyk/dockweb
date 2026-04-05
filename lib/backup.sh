@@ -52,8 +52,10 @@ cmd_backup_restore() {
     read -r restore_choice
 
     echo ""
-    log_warn "This will overwrite existing data!"
-    if ! confirm "  Continue with restore?" "n"; then
+    if ! confirm_dangerous \
+        "Restore from backup" \
+        "Current site files and/or database will be overwritten" \
+        "Sites may be briefly unavailable during restore"; then
         log_info "Cancelled."
         return 0
     fi

@@ -189,13 +189,10 @@ cmd_site_remove() {
     local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
     get_site_conf "$domain"
 
-    echo ""
-    echo -e "  ${RED}${BOLD}WARNING: This will remove site '$domain'${NC}"
-    echo "  Container: $PHP_CONTAINER"
-    echo "  Database:  $DB_NAME"
-    echo ""
-
-    if ! confirm "  Remove nginx config and container? (site files kept)" "n"; then
+    if ! confirm_dangerous \
+        "Remove site '${domain}'" \
+        "Container ${PHP_CONTAINER} stopped, nginx config deleted, database ${DB_NAME} optionally dropped" \
+        "Site goes offline immediately"; then
         log_info "Cancelled."
         return 0
     fi

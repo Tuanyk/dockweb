@@ -105,6 +105,35 @@ generate_password() {
     openssl rand -base64 24 | tr -d '/+=' | head -c 32
 }
 
+# Map user-friendly name to docker compose service name
+# Accepts: nginx, mysql, redis, domain name, or sanitized domain
+resolve_service() {
+    local input="$1"
+    case "$input" in
+        nginx|mysql|redis|backup|adminer|monitor|fail2ban|logrotate|certbot|modsecurity)
+            echo "$input"
+            return 0
+            ;;
+    esac
+    # Try as domain name
+    if [[ -f "${DOCKWEB_ROOT}/sites/${input}/.dockweb.conf" ]]; then
+        sanitize_domain "$input"
+        return 0
+    fi
+    # Try as already-sanitized service name (check if any site maps to it)
+    local conf
+    for conf in "${DOCKWEB_ROOT}"/sites/*/.dockweb.conf; do
+        [[ -f "$conf" ]] || continue
+        local domain
+        domain=$(grep '^DOMAIN=' "$conf" | cut -d= -f2)
+        if [[ "$(sanitize_domain "$domain")" == "$input" ]]; then
+            echo "$input"
+            return 0
+        fi
+    done
+    return 1
+}
+
 check_dependencies() {
     local missing=()
     command -v docker &>/dev/null || missing+=("docker")

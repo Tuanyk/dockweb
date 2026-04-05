@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source modules
 source "${SCRIPT_DIR}/lib/common.sh"
+source "${SCRIPT_DIR}/lib/safety.sh"
 source "${SCRIPT_DIR}/lib/services.sh"
 source "${SCRIPT_DIR}/lib/sites.sh"
 source "${SCRIPT_DIR}/lib/ssl.sh"
@@ -37,9 +38,11 @@ show_usage() {
     echo "  Services:"
     echo "    start               Start all services"
     echo "    stop                Stop all services"
-    echo "    restart             Restart all services"
+    echo "    restart [service]   Restart all or a single service"
     echo "    status              Show status and resource usage"
-    echo "    update              Pull latest images and rebuild"
+    echo "    update [service]    Update all or a single service (rolling)"
+    echo "    deploy [domain]     Deploy code changes (zero-downtime)"
+    echo "    self-update         Update dockweb scripts from git"
     echo ""
     echo "  Sites:"
     echo "    site list           List all configured sites"
@@ -87,23 +90,27 @@ show_menu() {
         echo ""
         echo -e "  ${BOLD}Services${NC}                  ${BOLD}Backup${NC}"
         echo "    1) Start services       9) Backup now"
-        echo "    2) Stop services       10) List backups"
-        echo "    3) Restart services    11) Restore backup"
+        echo -e "    2) Stop services ${RED}[!]${NC}   10) List backups"
+        echo -e "    3) Restart services ${RED}[!]${NC}11) Restore backup ${RED}[!]${NC}"
         echo "    4) Show status         12) Test backup"
         echo ""
         echo -e "  ${BOLD}Sites${NC}                     ${BOLD}Monitoring${NC}"
         echo "    5) List sites          13) View logs"
         echo "    6) Add site            14) Health monitor"
-        echo "    7) Remove site         15) Update images"
+        echo -e "    7) Remove site ${RED}[!]${NC}     15) Update images ${RED}[!]${NC}"
         echo "    8) Manage SSL          16) Server setup"
         echo "                           17) Configuration"
         echo ""
-        echo -e "  ${BOLD}Cache${NC}"
+        echo -e "  ${BOLD}Deploy & Maintain${NC}"
         echo "    18) Clear OPcache"
+        echo "    19) Deploy code (zero-downtime)"
+        echo "    20) Self-update (scripts only)"
+        echo ""
+        echo -e "  ${DIM}[!] = requires confirmation${NC}"
         echo ""
         echo "    0) Exit"
         echo ""
-        echo -ne "  Choose [0-18]: "
+        echo -ne "  Choose [0-20]: "
         read -r choice
 
         case "$choice" in
@@ -125,6 +132,8 @@ show_menu() {
             16) cmd_setup ;;
             17) cmd_config ;;
             18) menu_opcache_clear ;;
+            19) cmd_deploy ;;
+            20) cmd_self_update ;;
             0)  echo ""; log_info "Bye!"; exit 0 ;;
             *)  log_error "Invalid choice." ;;
         esac
@@ -153,13 +162,19 @@ main() {
             cmd_stop
             ;;
         restart)
-            cmd_restart
+            cmd_restart "${2:-}"
             ;;
         status)
             cmd_status
             ;;
         update)
-            cmd_update
+            cmd_update "${2:-}"
+            ;;
+        deploy)
+            cmd_deploy "${2:-}"
+            ;;
+        self-update)
+            cmd_self_update
             ;;
         site)
             case "${2:-}" in
