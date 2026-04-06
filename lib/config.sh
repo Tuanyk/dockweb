@@ -562,6 +562,13 @@ cmd_config_resources() {
 }
 
 _config_backup_apply_hint() {
-    echo ""
-    log_info "Apply changes with: dockweb restart"
+    if docker ps --format '{{.Names}}' | grep -q '^backup_service$'; then
+        echo ""
+        log_info "Restarting backup container to apply changes..."
+        $(docker_compose_cmd) up -d --no-deps backup
+        log_success "Backup container restarted."
+    else
+        echo ""
+        log_info "Backup container is not running. Changes will apply on next start."
+    fi
 }
