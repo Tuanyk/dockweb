@@ -53,7 +53,21 @@ echo "Database dump checksum: $DUMP_CHECKSUM"
 
 # 4. Perform Backup
 echo "Running Restic backup..."
-restic backup /sites /tmp/all_databases.sql --tag "scheduled-backup"
+
+# Build exclude flags from BACKUP_EXCLUDE_SITES (comma-separated domains)
+EXCLUDE_FLAGS=""
+if [ -n "$BACKUP_EXCLUDE_SITES" ]; then
+    IFS=',' read -ra EXCLUDED <<< "$BACKUP_EXCLUDE_SITES"
+    for domain in "${EXCLUDED[@]}"; do
+        domain=$(echo "$domain" | xargs)  # trim whitespace
+        if [ -n "$domain" ]; then
+            EXCLUDE_FLAGS="$EXCLUDE_FLAGS --exclude /sites/$domain"
+            echo "Excluding from backup: $domain"
+        fi
+    done
+fi
+
+restic backup /sites /tmp/all_databases.sql --tag "scheduled-backup" $EXCLUDE_FLAGS
 
 if [ $? -ne 0 ]; then
     send_alert "Backup Failed" "Restic backup command failed"

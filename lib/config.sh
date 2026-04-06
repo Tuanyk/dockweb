@@ -130,6 +130,9 @@ cmd_config_backup() {
     current_weekly=$(get_env_val BACKUP_KEEP_WEEKLY 4)
     current_monthly=$(get_env_val BACKUP_KEEP_MONTHLY 6)
 
+    local current_exclude
+    current_exclude=$(get_env_val BACKUP_EXCLUDE_SITES "")
+
     echo ""
     if [[ "$backup_enabled" == "false" ]]; then
         echo -e "  Status: ${RED}disabled${NC}"
@@ -138,6 +141,11 @@ cmd_config_backup() {
         echo "    Schedule:     $current_schedule"
         echo "    Retention:    ${current_daily} daily / ${current_weekly} weekly / ${current_monthly} monthly"
         echo "    Alert email:  $(get_env_val ALERT_EMAIL '(not set)')"
+        if [[ -n "$current_exclude" ]]; then
+            echo -e "    Excluded:     ${YELLOW}${current_exclude}${NC}"
+        else
+            echo "    Excluded:     (none — all sites backed up)"
+        fi
     fi
 
     echo ""
@@ -149,6 +157,7 @@ cmd_config_backup() {
         echo "    2) Backup schedule"
         echo "    3) Retention policy (how many backups to keep)"
         echo "    4) Alert email"
+        echo "    5) Exclude sites from backup"
     fi
     echo "    0) Back"
     echo ""
@@ -232,9 +241,94 @@ cmd_config_backup() {
             log_success "Alert email updated."
             _config_backup_apply_hint
             ;;
+        5)
+            _config_backup_exclude_sites
+            ;;
         0) return 0 ;;
         *) log_error "Invalid choice." ;;
     esac
+}
+
+_config_backup_exclude_sites() {
+    local all_sites excluded_csv excluded_arr=()
+
+    all_sites=$(list_all_sites)
+    if [[ -z "$all_sites" ]]; then
+        log_error "No sites found. Add a site first with: dockweb site add"
+        return 1
+    fi
+
+    excluded_csv=$(get_env_val BACKUP_EXCLUDE_SITES "")
+    IFS=',' read -ra excluded_arr <<< "$excluded_csv"
+
+    echo ""
+    echo "  Select sites to EXCLUDE from backup."
+    echo "  Currently excluded sites are marked with [x]."
+    echo ""
+
+    local i=1
+    local site_list=()
+    while IFS= read -r site; do
+        site_list+=("$site")
+        local marker=" "
+        for ex in "${excluded_arr[@]}"; do
+            if [[ "$(echo "$ex" | xargs)" == "$site" ]]; then
+                marker="x"
+                break
+            fi
+        done
+        echo "    ${i}) [${marker}] ${site}"
+        ((i++))
+    done <<< "$all_sites"
+
+    echo ""
+    echo "  Enter site numbers to toggle (space-separated), or 'clear' to include all."
+    echo -ne "  Toggle: "
+    read -r toggle_input
+
+    if [[ "$toggle_input" == "clear" ]]; then
+        set_env_val "BACKUP_EXCLUDE_SITES" ""
+        log_success "All sites will be backed up."
+        _config_backup_apply_hint
+        return
+    fi
+
+    # Toggle selected sites
+    for num in $toggle_input; do
+        if [[ "$num" =~ ^[0-9]+$ ]] && (( num >= 1 && num <= ${#site_list[@]} )); then
+            local site="${site_list[$((num-1))]}"
+            local found=false
+            local new_arr=()
+            for ex in "${excluded_arr[@]}"; do
+                local trimmed
+                trimmed=$(echo "$ex" | xargs)
+                if [[ "$trimmed" == "$site" ]]; then
+                    found=true
+                else
+                    [[ -n "$trimmed" ]] && new_arr+=("$trimmed")
+                fi
+            done
+            if [[ "$found" == "false" ]]; then
+                new_arr+=("$site")
+            fi
+            excluded_arr=("${new_arr[@]}")
+        fi
+    done
+
+    # Build comma-separated string
+    local result=""
+    for ex in "${excluded_arr[@]}"; do
+        [[ -n "$ex" ]] && result="${result:+${result},}${ex}"
+    done
+
+    set_env_val "BACKUP_EXCLUDE_SITES" "$result"
+
+    if [[ -n "$result" ]]; then
+        log_success "Excluded sites: ${result}"
+    else
+        log_success "All sites will be backed up."
+    fi
+    _config_backup_apply_hint
 }
 
 cmd_config_passwords() {
