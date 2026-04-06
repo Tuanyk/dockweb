@@ -132,18 +132,85 @@ setup_firewall() {
 setup_swap() {
     header "Configuring Swap"
 
-    if swapon --show | grep -q '/'; then
-        log_info "Swap already exists:"
-        swapon --show
-        return 0
-    fi
-
     local total_ram
     total_ram=$(free -m | awk '/^Mem:/{print $2}')
-    local swap_size="2G"
-    [[ $total_ram -le 2048 ]] && swap_size="2G"
-    [[ $total_ram -gt 2048 && $total_ram -le 8192 ]] && swap_size="4G"
-    [[ $total_ram -gt 8192 ]] && swap_size="4G"
+    local total_ram_h
+    total_ram_h=$(awk "BEGIN {printf \"%.1f\", $total_ram / 1024}")
+
+    # Show current state
+    local current_swap=""
+    if swapon --show | grep -q '/'; then
+        current_swap=$(swapon --show --noheadings --bytes | awk '{total+=$3} END {printf "%.0f", total/1048576}')
+        local current_swap_h
+        current_swap_h=$(awk "BEGIN {printf \"%.1f\", $current_swap / 1024}")
+        echo -e "  RAM: ${total_ram_h} GB | Current swap: ${current_swap_h} GB"
+        swapon --show
+        echo ""
+    else
+        echo -e "  RAM: ${total_ram_h} GB | Current swap: none"
+        echo ""
+    fi
+
+    # Recommend swap size based on RAM
+    local recommended="2G"
+    [[ $total_ram -le 1024 ]] && recommended="2G"
+    [[ $total_ram -gt 1024 && $total_ram -le 2048 ]] && recommended="2G"
+    [[ $total_ram -gt 2048 && $total_ram -le 4096 ]] && recommended="4G"
+    [[ $total_ram -gt 4096 && $total_ram -le 8192 ]] && recommended="4G"
+    [[ $total_ram -gt 8192 ]] && recommended="4G"
+
+    echo "  Choose swap size (recommended: ${recommended}):"
+    echo "    1) 1 GB"
+    echo "    2) 2 GB"
+    echo "    3) 4 GB"
+    echo "    4) 8 GB"
+    echo "    5) Custom size"
+    if [[ -n "$current_swap" ]]; then
+        echo "    6) Remove swap"
+    fi
+    echo "    0) Cancel"
+    echo ""
+    echo -ne "  Choose: "
+    read -r swap_choice
+
+    local swap_size=""
+    case "$swap_choice" in
+        1) swap_size="1G" ;;
+        2) swap_size="2G" ;;
+        3) swap_size="4G" ;;
+        4) swap_size="8G" ;;
+        5)
+            echo -ne "  Enter swap size (e.g. 1G, 2G, 512M): "
+            read -r swap_size
+            if [[ ! "$swap_size" =~ ^[0-9]+(G|M)$ ]]; then
+                log_error "Invalid size. Use format like 2G or 512M."
+                return 1
+            fi
+            ;;
+        6)
+            if [[ -n "$current_swap" ]]; then
+                _swap_remove
+                return
+            fi
+            log_error "No swap to remove."
+            return 1
+            ;;
+        0) return 0 ;;
+        *) log_error "Invalid choice."; return 1 ;;
+    esac
+
+    # Remove existing swap first if present
+    if [[ -n "$current_swap" ]]; then
+        log_info "Removing existing swap..."
+        _swap_remove_quiet
+    fi
+
+    _swap_create "$swap_size"
+}
+
+# Create swap file and configure swappiness
+_swap_create() {
+    local swap_size="$1"
 
     log_info "Creating ${swap_size} swap file..."
     sudo fallocate -l "$swap_size" /swapfile
@@ -153,17 +220,37 @@ setup_swap() {
 
     # Make permanent
     if ! grep -q '/swapfile' /etc/fstab; then
-        echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+        echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab > /dev/null
     fi
 
-    # Optimize swappiness
-    sudo sysctl vm.swappiness=10
+    # Optimize swappiness for web servers
+    sudo sysctl -q vm.swappiness=10
     if ! grep -q 'vm.swappiness' /etc/sysctl.conf; then
-        echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf
+        echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf > /dev/null
     fi
 
+    echo ""
     log_success "Swap configured: ${swap_size}"
     swapon --show
+}
+
+# Remove swap silently (used when resizing)
+_swap_remove_quiet() {
+    sudo swapoff /swapfile 2>/dev/null || true
+    sudo rm -f /swapfile
+    sudo sed -i '\|/swapfile|d' /etc/fstab 2>/dev/null || true
+}
+
+# Remove swap with confirmation
+_swap_remove() {
+    echo -ne "  ${RED}Remove swap entirely? This cannot be undone. [y/N]:${NC} "
+    read -r confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        _swap_remove_quiet
+        log_success "Swap removed."
+    else
+        log_info "Cancelled."
+    fi
 }
 
 setup_sysctl() {

@@ -58,9 +58,10 @@ cmd_config() {
         backup)   cmd_config_backup ;;
         passwords) cmd_config_passwords ;;
         resources) cmd_config_resources ;;
+        swap)      setup_swap ;;
         *)
             log_error "Unknown config section: $subcmd"
-            echo "  Usage: dockweb config [backup|passwords|resources]"
+            echo "  Usage: dockweb config [backup|passwords|resources|swap]"
             return 1
             ;;
     esac
@@ -98,7 +99,22 @@ cmd_config_show() {
     echo "    Redis maxmemory: $(get_env_val REDIS_MAXMEMORY '256mb')"
 
     echo ""
-    echo -e "  ${DIM}Edit with: dockweb config [backup|passwords|resources]${NC}"
+    echo -e "  ${BOLD}Swap${NC}"
+    if swapon --show 2>/dev/null | grep -q '/'; then
+        local swap_size_mb
+        swap_size_mb=$(swapon --show --noheadings --bytes 2>/dev/null | awk '{total+=$3} END {printf "%.0f", total/1048576}')
+        local swap_h
+        swap_h=$(awk "BEGIN {printf \"%.1f\", $swap_size_mb / 1024}")
+        echo "    Swap:            ${GREEN}${swap_h} GB${NC}"
+    else
+        echo "    Swap:            ${RED}none${NC}"
+    fi
+    local swappiness
+    swappiness=$(cat /proc/sys/vm/swappiness 2>/dev/null || echo "?")
+    echo "    Swappiness:      ${swappiness}"
+
+    echo ""
+    echo -e "  ${DIM}Edit with: dockweb config [backup|passwords|resources|swap]${NC}"
 }
 
 cmd_config_backup() {

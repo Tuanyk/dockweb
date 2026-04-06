@@ -80,6 +80,7 @@ show_usage() {
     echo "    config backup       Edit backup schedule & retention"
     echo "    config passwords    Edit passwords & credentials"
     echo "    config resources    Edit resource limits (MySQL, PHP, Redis)"
+    echo "    config swap         Resize or remove swap"
     echo ""
     echo "  Setup:"
     echo "    setup               Initial server setup"
