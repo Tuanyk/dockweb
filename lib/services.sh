@@ -349,16 +349,125 @@ _update_single_service() {
     esac
 }
 
-cmd_opcache_clear() {
+# ── Cache Management ──────────────────────────────────────────────────
+
+cmd_cache() {
+    local subcmd="${1:-}"
+    local arg="${2:-}"
+
+    case "$subcmd" in
+        clear)       cmd_cache_clear "$arg" ;;
+        clear-nginx) cmd_cache_clear_nginx "$arg" ;;
+        clear-php)   cmd_cache_clear_php "$arg" ;;
+        status)      cmd_cache_status ;;
+        "")          menu_cache ;;
+        *)
+            log_error "Unknown cache command: $subcmd"
+            echo "  Usage: dockweb cache {clear|clear-nginx|clear-php|status}"
+            return 1
+            ;;
+    esac
+}
+
+# Backward compat alias
+cmd_opcache_clear() { cmd_cache_clear "$@"; }
+
+# Clear both nginx + PHP OPcache
+cmd_cache_clear() {
     local domain="${1:-}"
 
+    if [[ -z "$domain" ]]; then
+        header "Clearing all caches"
+        _clear_php_opcache
+        _purge_nginx_cache
+    else
+        header "Clearing all caches: ${domain}"
+        _clear_php_opcache "$domain"
+        _purge_nginx_cache
+    fi
+}
+
+# Clear nginx FastCGI cache only
+cmd_cache_clear_nginx() {
+    header "Clearing nginx FastCGI cache"
+    _purge_nginx_cache
+}
+
+# Clear PHP OPcache only
+cmd_cache_clear_php() {
+    local domain="${1:-}"
+
+    if [[ -z "$domain" ]]; then
+        header "Clearing PHP OPcache (all sites)"
+        _clear_php_opcache
+    else
+        header "Clearing PHP OPcache: ${domain}"
+        _clear_php_opcache "$domain"
+    fi
+}
+
+# Show cache sizes and status
+cmd_cache_status() {
+    header "Cache Status"
+
+    # Nginx FastCGI cache
+    echo -e "  ${BOLD}Nginx FastCGI Cache${NC}"
+    local nginx_size
+    nginx_size=$(docker exec gateway_nginx du -sh /var/cache/nginx/ 2>/dev/null | awk '{print $1}')
+    if [[ -n "$nginx_size" ]]; then
+        echo "    Size: ${nginx_size}"
+    else
+        echo "    Size: unavailable (container not running?)"
+    fi
+    echo ""
+
+    # PHP OPcache per site
+    echo -e "  ${BOLD}PHP OPcache${NC}"
+    local sites
+    sites=$(list_all_sites)
+    if [[ -z "$sites" ]]; then
+        echo "    No sites configured."
+        return
+    fi
+
+    while IFS= read -r site; do
+        [[ -z "$site" ]] && continue
+        local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
+        if get_site_conf "$site"; then
+            local opcache_info
+            opcache_info=$(docker exec "$PHP_CONTAINER" php -r '
+                $s = opcache_get_status(false);
+                if ($s) {
+                    $used = round($s["memory_usage"]["used_memory"] / 1048576, 1);
+                    $total = round(($s["memory_usage"]["used_memory"] + $s["memory_usage"]["free_memory"]) / 1048576, 1);
+                    $hit = $s["opcache_statistics"]["hits"];
+                    $miss = $s["opcache_statistics"]["misses"];
+                    $rate = ($hit + $miss) > 0 ? round($hit / ($hit + $miss) * 100, 1) : 0;
+                    echo "${used}/${total} MB | hit rate: ${rate}%";
+                } else {
+                    echo "disabled";
+                }
+            ' 2>/dev/null)
+            echo "    ${site} (${PHP_CONTAINER}): ${opcache_info:-unavailable}"
+        fi
+    done <<< "$sites"
+}
+
+# ── Cache internals ──────────────────────────────────────────────────
+
+# Clear PHP OPcache for one or all sites (zero-downtime via USR2)
+_clear_php_opcache() {
+    local domain="${1:-}"
+    local failed=0
+
     # USR2 gracefully reloads PHP-FPM workers, clearing opcache
-    # This is zero-downtime — active requests finish before workers restart
-    _clear_opcache_for() {
+    # Active requests finish before workers restart — zero downtime
+    _opcache_reload_site() {
         local site="$1"
+        local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
         if get_site_conf "$site"; then
             if docker exec "$PHP_CONTAINER" kill -USR2 1 2>/dev/null; then
-                log_success "${site} — OPcache cleared (PHP-FPM reloaded)"
+                log_success "${site} — OPcache cleared"
                 return 0
             else
                 log_error "${site} — failed (container not running?)"
@@ -370,37 +479,83 @@ cmd_opcache_clear() {
         fi
     }
 
-    if [[ -z "$domain" ]]; then
-        header "Clearing caches (all sites)"
+    if [[ -n "$domain" ]]; then
+        _opcache_reload_site "$domain"
+    else
         local sites
         sites=$(list_all_sites)
         if [[ -z "$sites" ]]; then
             log_error "No sites configured."
             return 1
         fi
-        local failed=0
         while IFS= read -r site; do
             [[ -z "$site" ]] && continue
-            _clear_opcache_for "$site" || failed=1
+            _opcache_reload_site "$site" || failed=1
         done <<< "$sites"
-        # Clear nginx FastCGI cache for all sites
-        _purge_nginx_cache
-        [[ $failed -eq 0 ]] && log_success "All caches cleared (OPcache + nginx)."
-    else
-        header "Clearing caches: ${domain}"
-        _clear_opcache_for "$domain"
-        _purge_nginx_cache
+        [[ $failed -eq 0 ]] && log_success "All PHP OPcache cleared."
     fi
 }
 
-# Purge nginx FastCGI cache and reload
+# Purge nginx FastCGI cache and reload (zero-downtime)
 _purge_nginx_cache() {
     docker exec gateway_nginx sh -c 'rm -rf /var/cache/nginx/*' 2>/dev/null || true
     docker exec gateway_nginx nginx -s reload 2>/dev/null || true
     log_success "Nginx FastCGI cache purged."
 }
 
-menu_opcache_clear() {
+# ── Cache interactive menu ───────────────────────────────────────────
+
+menu_cache() {
+    header "Cache Management"
+
+    # Show current status inline
+    local nginx_size
+    nginx_size=$(docker exec gateway_nginx du -sh /var/cache/nginx/ 2>/dev/null | awk '{print $1}')
+    echo -e "  Nginx FastCGI cache: ${nginx_size:-N/A}"
+
+    local sites
+    sites=$(list_all_sites)
+    if [[ -n "$sites" ]]; then
+        while IFS= read -r site; do
+            [[ -z "$site" ]] && continue
+            local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
+            if get_site_conf "$site"; then
+                local mem
+                mem=$(docker exec "$PHP_CONTAINER" php -r '
+                    $s = opcache_get_status(false);
+                    if ($s) {
+                        $used = round($s["memory_usage"]["used_memory"] / 1048576, 1);
+                        $total = round(($s["memory_usage"]["used_memory"] + $s["memory_usage"]["free_memory"]) / 1048576, 1);
+                        echo "${used}/${total} MB";
+                    } else { echo "off"; }
+                ' 2>/dev/null)
+                echo -e "  PHP OPcache (${site}): ${mem:-N/A}"
+            fi
+        done <<< "$sites"
+    fi
+
+    echo ""
+    echo "  Which cache to clear?"
+    echo "    1) Nginx cache only"
+    echo "    2) PHP OPcache only"
+    echo "    3) Both (nginx + PHP)"
+    echo "    0) Back"
+    echo ""
+    echo -ne "  Choose [0-3]: "
+    read -r layer_choice
+
+    case "$layer_choice" in
+        1) cmd_cache_clear_nginx ;;
+        2) _menu_cache_pick_site "php" ;;
+        3) _menu_cache_pick_site "both" ;;
+        0) return ;;
+        *) log_error "Invalid choice." ;;
+    esac
+}
+
+# Site picker for cache clearing (used by interactive menu)
+_menu_cache_pick_site() {
+    local mode="$1"  # "php" or "both"
     local sites
     sites=$(list_all_sites)
     if [[ -z "$sites" ]]; then
@@ -408,7 +563,8 @@ menu_opcache_clear() {
         return 1
     fi
 
-    header "Clear OPcache"
+    echo ""
+    echo "  Clear for which site?"
     echo "    0) All sites"
     local i=1
     local site_arr=()
@@ -422,13 +578,20 @@ menu_opcache_clear() {
     echo -ne "  Choose [0-$((i-1))]: "
     read -r choice
 
+    local domain=""
     if [[ "$choice" == "0" ]]; then
-        cmd_opcache_clear
+        domain=""
     elif [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#site_arr[@]} )); then
-        cmd_opcache_clear "${site_arr[$((choice-1))]}"
+        domain="${site_arr[$((choice-1))]}"
     else
         log_error "Invalid choice."
+        return 1
     fi
+
+    case "$mode" in
+        php)  cmd_cache_clear_php "$domain" ;;
+        both) cmd_cache_clear "$domain" ;;
+    esac
 }
 
 cmd_deploy() {

@@ -65,7 +65,11 @@ show_usage() {
     echo "    backup test         Test backup restore"
     echo ""
     echo "  Cache:"
-    echo "    opcache-clear [domain]  Clear PHP OPcache (all sites if no domain)"
+    echo "    cache                     Cache management menu"
+    echo "    cache clear [domain]      Clear all caches (nginx + PHP OPcache)"
+    echo "    cache clear-nginx         Clear nginx FastCGI cache only"
+    echo "    cache clear-php [domain]  Clear PHP OPcache only"
+    echo "    cache status              Show cache sizes and hit rates"
     echo ""
     echo "  Monitoring:"
     echo "    log [service]       View service logs"
@@ -102,7 +106,7 @@ show_menu() {
         echo "                           17) Configuration"
         echo ""
         echo -e "  ${BOLD}Deploy & Maintain${NC}"
-        echo "    18) Clear OPcache"
+        echo "    18) Cache management"
         echo "    19) Deploy code (zero-downtime)"
         echo "    20) Self-update (scripts only)"
         echo ""
@@ -131,7 +135,7 @@ show_menu() {
             15) cmd_update ;;
             16) cmd_setup ;;
             17) cmd_config ;;
-            18) menu_opcache_clear ;;
+            18) menu_cache ;;
             19) cmd_deploy ;;
             20) cmd_self_update ;;
             0)  echo ""; log_info "Bye!"; exit 0 ;;
@@ -203,8 +207,11 @@ main() {
                 *)       log_error "Usage: dockweb backup {now|list|restore|test}" ;;
             esac
             ;;
+        cache)
+            cmd_cache "${2:-}" "${3:-}"
+            ;;
         opcache-clear)
-            cmd_opcache_clear "${2:-}"
+            cmd_cache_clear "${2:-}"
             ;;
         log)
             cmd_log "${2:-}"
