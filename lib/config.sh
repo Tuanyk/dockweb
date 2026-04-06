@@ -114,7 +114,24 @@ cmd_config_show() {
     echo "    Swappiness:      ${swappiness}"
 
     echo ""
-    echo -e "  ${DIM}Edit with: dockweb config [backup|passwords|resources|swap]${NC}"
+    echo "  What to configure?"
+    echo "    1) Backup"
+    echo "    2) Passwords"
+    echo "    3) Resources"
+    echo "    4) Swap"
+    echo "    0) Back"
+    echo ""
+    echo -ne "  Choose: "
+    read -r choice
+
+    case "$choice" in
+        1) cmd_config_backup ;;
+        2) cmd_config_passwords ;;
+        3) cmd_config_resources ;;
+        4) setup_swap ;;
+        0) return 0 ;;
+        *) log_error "Invalid choice." ;;
+    esac
 }
 
 cmd_config_backup() {
