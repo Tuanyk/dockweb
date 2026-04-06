@@ -100,9 +100,9 @@ cmd_config_show() {
 
     echo ""
     echo -e "  ${BOLD}Swap${NC}"
-    if swapon --show 2>/dev/null | grep -q '/'; then
+    if /usr/sbin/swapon --show 2>/dev/null | grep -q '/'; then
         local swap_size_mb
-        swap_size_mb=$(swapon --show --noheadings --bytes 2>/dev/null | awk '{total+=$3} END {printf "%.0f", total/1048576}')
+        swap_size_mb=$(/usr/sbin/swapon --show --noheadings --bytes 2>/dev/null | awk '{total+=$3} END {printf "%.0f", total/1048576}')
         local swap_h
         swap_h=$(awk "BEGIN {printf \"%.1f\", $swap_size_mb / 1024}")
         echo "    Swap:            ${GREEN}${swap_h} GB${NC}"

@@ -139,12 +139,12 @@ setup_swap() {
 
     # Show current state
     local current_swap=""
-    if swapon --show | grep -q '/'; then
-        current_swap=$(swapon --show --noheadings --bytes | awk '{total+=$3} END {printf "%.0f", total/1048576}')
+    if /usr/sbin/swapon --show | grep -q '/'; then
+        current_swap=$(/usr/sbin/swapon --show --noheadings --bytes | awk '{total+=$3} END {printf "%.0f", total/1048576}')
         local current_swap_h
         current_swap_h=$(awk "BEGIN {printf \"%.1f\", $current_swap / 1024}")
         echo -e "  RAM: ${total_ram_h} GB | Current swap: ${current_swap_h} GB"
-        swapon --show
+        /usr/sbin/swapon --show
         echo ""
     else
         echo -e "  RAM: ${total_ram_h} GB | Current swap: none"
@@ -213,10 +213,10 @@ _swap_create() {
     local swap_size="$1"
 
     log_info "Creating ${swap_size} swap file..."
-    sudo fallocate -l "$swap_size" /swapfile
+    sudo /usr/bin/fallocate -l "$swap_size" /swapfile
     sudo chmod 600 /swapfile
-    sudo mkswap /swapfile
-    sudo swapon /swapfile
+    sudo /usr/sbin/mkswap /swapfile
+    sudo /usr/sbin/swapon /swapfile
 
     # Make permanent
     if ! grep -q '/swapfile' /etc/fstab; then
@@ -224,19 +224,19 @@ _swap_create() {
     fi
 
     # Optimize swappiness for web servers
-    sudo sysctl -q vm.swappiness=10
+    sudo /usr/sbin/sysctl -q vm.swappiness=10
     if ! grep -q 'vm.swappiness' /etc/sysctl.conf; then
         echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf > /dev/null
     fi
 
     echo ""
     log_success "Swap configured: ${swap_size}"
-    swapon --show
+    /usr/sbin/swapon --show
 }
 
 # Remove swap silently (used when resizing)
 _swap_remove_quiet() {
-    sudo swapoff /swapfile 2>/dev/null || true
+    sudo /usr/sbin/swapoff /swapfile 2>/dev/null || true
     sudo rm -f /swapfile
     sudo sed -i '\|/swapfile|d' /etc/fstab 2>/dev/null || true
 }
@@ -279,7 +279,7 @@ fs.file-max = 2097152
 fs.inotify.max_user_watches = 524288
 EOF
 
-    sudo sysctl -p "$sysctl_conf"
+    sudo /usr/sbin/sysctl -p "$sysctl_conf"
 
     # File descriptor limits
     if ! grep -q '65535' /etc/security/limits.conf 2>/dev/null; then
