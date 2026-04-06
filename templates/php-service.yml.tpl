@@ -1,5 +1,9 @@
   {{SERVICE_NAME}}:
-    build: ./php
+    build:
+      context: ./php
+      args:
+        PHP_UID: ${PHP_UID:-1000}
+        PHP_GID: ${PHP_GID:-1000}
     container_name: {{CONTAINER_NAME}}
     restart: unless-stopped
     environment:

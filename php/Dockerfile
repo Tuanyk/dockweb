@@ -1,5 +1,15 @@
 FROM php:8.3-fpm-alpine
 
+# 0. Remap www-data to match host deploy user UID/GID
+# This avoids permission conflicts on bind-mounted volumes.
+# Default 1000 works for most single-user Linux servers.
+ARG PHP_UID=1000
+ARG PHP_GID=1000
+RUN deluser www-data 2>/dev/null || true && \
+    delgroup www-data 2>/dev/null || true && \
+    addgroup -g ${PHP_GID} www-data && \
+    adduser -u ${PHP_UID} -G www-data -s /bin/sh -D www-data
+
 # 1. Install Runtime Dependencies
 # These libraries are needed for the PHP extensions to run.
 # - freetype, libjpeg-turbo, libpng: For GD (Images)
