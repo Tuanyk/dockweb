@@ -110,12 +110,13 @@ show_menu() {
         echo "    18) Cache management"
         echo "    19) Deploy code (zero-downtime)"
         echo "    20) Self-update (scripts only)"
+        echo "    21) Configure swap"
         echo ""
         echo -e "  ${DIM}[!] = requires confirmation${NC}"
         echo ""
         echo "    0) Exit"
         echo ""
-        echo -ne "  Choose [0-20]: "
+        echo -ne "  Choose [0-21]: "
         read -r choice
 
         case "$choice" in
@@ -139,6 +140,7 @@ show_menu() {
             18) menu_cache ;;
             19) cmd_deploy ;;
             20) cmd_self_update ;;
+            21) setup_swap ;;
             0)  echo ""; log_info "Bye!"; exit 0 ;;
             *)  log_error "Invalid choice." ;;
         esac
