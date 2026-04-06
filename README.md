@@ -10,26 +10,22 @@
 
 ## Why dockweb?
 
-I'm a freelancer. Every time a client needed a PHP site hosted, I'd spin up a VPS and do the same thing over and over:
-
-1. Write a `docker-compose.yml` from scratch
-2. Write an Nginx config, get the `fastcgi_pass` and `server_name` right
-3. Create a MySQL database and user with proper permissions
-4. Figure out SSL — Cloudflare origin cert? Let's Encrypt? Copy-paste from the last project?
-5. Set up backups, monitoring, fail2ban...
-6. Client needs a second site? Do it all again on the same server, but now worry about conflicts
-
-After the fifth or sixth time, I automated it. That's dockweb.
+I'm a freelancer. Every time a client needed a PHP site hosted, I'd spin up a VPS and do the same thing over and over: write a `docker-compose.yml`, configure Nginx, create a MySQL database, figure out SSL, set up backups and fail2ban... then do it all again for the next client. After the fifth or sixth time, I automated it. That's dockweb.
 
 **One command to add a site.** It creates the PHP container, Nginx config, database, user, and SSL — all wired up. Need a second site? Run the same command. Resources auto-scale based on your server's RAM.
 
-### vs writing docker-compose yourself
-
-You *can* do everything dockweb does manually. But you'll spend hours on each server, and the setup won't be consistent across projects. dockweb gives you a production-ready stack with security hardening (rate limiting, Fail2Ban, Cloudflare IP allowlisting), automated backups with restore testing, and health monitoring — all preconfigured.
-
-### vs Coolify / CapRover / Dokku
-
-Those are full platforms with web UIs, background services, and their own update cycles. If one breaks, you're debugging *their* stack on top of yours. dockweb is a single shell script — no daemon, no web UI, no database of its own. You can read every line of it. If something breaks, it's just Docker and Nginx underneath.
+| | **dockweb** | **Manual Docker Compose** | **Coolify / CapRover / Dokku** |
+|---|---|---|---|
+| **Setup time** | One command per site | Hours per server | Medium (platform install + learning curve) |
+| **Multi-site** | Built-in, no conflicts | Manual isolation, easy to break | Supported |
+| **SSL** | Cloudflare / Let's Encrypt / mkcert built-in | DIY per site | Built-in |
+| **Security** | Rate limiting, Fail2Ban, Cloudflare IP allowlisting preconfigured | Manual setup each time | Varies by platform |
+| **Backups** | Automated with restore testing | DIY | Varies |
+| **Health monitoring** | Included | DIY | Included |
+| **Resource scaling** | Auto-tuned to server RAM | Manual | Manual or basic auto |
+| **Dependencies** | Single shell script, no daemon | Docker + your configs | Web UI, background services, database |
+| **Debuggability** | Just Docker + Nginx underneath | Full control | Debugging their stack on top of yours |
+| **Consistency** | Same setup every time | Drifts across projects | Consistent within platform |
 
 ---
 
