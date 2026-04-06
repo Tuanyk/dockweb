@@ -1,13 +1,24 @@
 #!/bin/bash
 # dockweb - backup management
 
-cmd_backup_now() {
-    header "Running Backup"
+# Restic repo path inside the backup container
+_RESTIC_REPO="/backups/repo"
 
+# Run restic command inside backup container with repo env set
+_restic() {
+    docker exec -e RESTIC_REPOSITORY="$_RESTIC_REPO" backup_service restic "$@"
+}
+
+_backup_check_running() {
     if ! docker ps --format '{{.Names}}' | grep -q '^backup_service$'; then
         log_error "Backup container is not running. Start services first."
         return 1
     fi
+}
+
+cmd_backup_now() {
+    header "Running Backup"
+    _backup_check_running || return 1
 
     log_info "Starting backup (database + site files)..."
     docker exec backup_service /scripts/backup.sh
@@ -16,26 +27,18 @@ cmd_backup_now() {
 
 cmd_backup_list() {
     header "Backup Snapshots"
+    _backup_check_running || return 1
 
-    if ! docker ps --format '{{.Names}}' | grep -q '^backup_service$'; then
-        log_error "Backup container is not running."
-        return 1
-    fi
-
-    docker exec backup_service restic snapshots
+    _restic snapshots
 }
 
 cmd_backup_restore() {
     header "Restore Backup"
-
-    if ! docker ps --format '{{.Names}}' | grep -q '^backup_service$'; then
-        log_error "Backup container is not running."
-        return 1
-    fi
+    _backup_check_running || return 1
 
     # List snapshots
     echo ""
-    docker exec backup_service restic snapshots
+    _restic snapshots
     echo ""
 
     echo -ne "  Snapshot ID to restore (or 'latest'): "
@@ -63,12 +66,12 @@ cmd_backup_restore() {
     case "$restore_choice" in
         1)
             log_info "Restoring site files..."
-            docker exec backup_service restic restore "$snapshot_id" --target / --include "/sites"
+            _restic restore "$snapshot_id" --target / --include "/sites"
             log_success "Site files restored."
             ;;
         2)
             log_info "Restoring database dump..."
-            docker exec backup_service restic restore "$snapshot_id" --target /tmp/restore --include "all_databases.sql"
+            _restic restore "$snapshot_id" --target /tmp/restore --include "all_databases.sql"
 
             load_env
             log_info "Importing database..."
@@ -78,10 +81,10 @@ cmd_backup_restore() {
             ;;
         3)
             log_info "Restoring site files..."
-            docker exec backup_service restic restore "$snapshot_id" --target / --include "/sites"
+            _restic restore "$snapshot_id" --target / --include "/sites"
 
             log_info "Restoring database..."
-            docker exec backup_service restic restore "$snapshot_id" --target /tmp/restore --include "all_databases.sql"
+            _restic restore "$snapshot_id" --target /tmp/restore --include "all_databases.sql"
 
             load_env
             docker exec backup_service sh -c "cat /tmp/restore/tmp/all_databases.sql | mysql -h shared_mysql -u root -p'${DB_ROOT_PASSWORD}'"
@@ -97,11 +100,7 @@ cmd_backup_restore() {
 
 cmd_backup_test() {
     header "Testing Backup Restore"
-
-    if ! docker ps --format '{{.Names}}' | grep -q '^backup_service$'; then
-        log_error "Backup container is not running."
-        return 1
-    fi
+    _backup_check_running || return 1
 
     log_info "Running restore test (safe, non-destructive)..."
     docker exec backup_service /scripts/test-restore.sh
