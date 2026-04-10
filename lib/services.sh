@@ -103,10 +103,26 @@ cmd_start() {
     cmd="$(docker_compose_cmd)"
     $cmd up -d --build
 
+    _reload_nginx_upstreams
+
     echo ""
     log_success "Services started!"
     echo ""
     $cmd ps
+}
+
+# Reload nginx so it re-resolves all fastcgi_pass hostnames. Required after
+# any PHP container is rebuilt/recreated, because nginx caches upstream IPs
+# at worker startup and keeps using the stale address → 502 Connection refused.
+_reload_nginx_upstreams() {
+    docker ps --format '{{.Names}}' | grep -q '^gateway_nginx$' || return 0
+    log_info "Reloading nginx to refresh PHP upstream IPs..."
+    if docker exec gateway_nginx nginx -s reload 2>/dev/null; then
+        return 0
+    fi
+    local cmd
+    cmd="$(docker_compose_cmd)"
+    $cmd restart nginx >/dev/null 2>&1
 }
 
 cmd_stop() {
@@ -283,6 +299,7 @@ cmd_update() {
         local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
         get_site_conf "$domain"
         _wait_healthy "$PHP_CONTAINER" 60
+        _reload_nginx_upstreams
         log_success "${domain} updated and healthy."
     done <<< "$sites"
 
@@ -374,6 +391,7 @@ _update_single_service() {
             if [[ -n "$domain" ]]; then
                 get_site_conf "$domain"
                 _wait_healthy "$PHP_CONTAINER" 60
+                _reload_nginx_upstreams
             fi
             log_success "${service} updated."
             ;;
@@ -527,9 +545,20 @@ _clear_php_opcache() {
     fi
 }
 
-# Purge nginx FastCGI cache and reload (zero-downtime)
+# Purge nginx FastCGI cache and reload (zero-downtime).
+# Deletes only the cache entries (levels=1:2 → 1-char hex top-level dirs) and
+# leaves the *_temp directories intact — those are only created at nginx
+# startup, not on `nginx -s reload`, so wiping them causes 502s on the next
+# PHP response that spills out of the inline fastcgi_buffers.
 _purge_nginx_cache() {
-    docker exec gateway_nginx sh -c 'rm -rf /var/cache/nginx/*' 2>/dev/null || true
+    docker exec gateway_nginx sh -c \
+        'find /var/cache/nginx -mindepth 1 -maxdepth 1 -type d \
+            ! -name fastcgi_temp \
+            ! -name client_temp \
+            ! -name proxy_temp \
+            ! -name scgi_temp \
+            ! -name uwsgi_temp \
+            -exec rm -rf {} +' 2>/dev/null || true
     docker exec gateway_nginx nginx -s reload 2>/dev/null || true
     log_success "Nginx FastCGI cache purged."
 }

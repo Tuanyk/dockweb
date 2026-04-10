@@ -32,7 +32,9 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost/health || exit 1"]
+      # Use 127.0.0.1 (not localhost) — alpine resolves localhost to ::1 first,
+      # and nginx only listens on IPv4, so wget would hit connection refused.
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
