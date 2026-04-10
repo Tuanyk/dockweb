@@ -62,8 +62,10 @@ RUN set -eux; \
     apk del .build-deps
 
 # 3. Install healthcheck script
+# Hits the PHP-FPM built-in /ping endpoint and checks for the "pong" response.
+# Requires ping.path = /ping and ping.response = pong in www.conf.
 RUN echo '#!/bin/sh' > /usr/local/bin/php-fpm-healthcheck && \
-    echo 'SCRIPT_NAME=/ping SCRIPT_FILENAME=/ping REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000 || exit 1' >> /usr/local/bin/php-fpm-healthcheck && \
+    echo 'SCRIPT_NAME=/ping SCRIPT_FILENAME=/ping REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000 | grep -q pong || exit 1' >> /usr/local/bin/php-fpm-healthcheck && \
     chmod +x /usr/local/bin/php-fpm-healthcheck && \
     apk add --no-cache fcgi
 
