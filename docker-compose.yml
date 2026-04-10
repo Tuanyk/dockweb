@@ -4,6 +4,10 @@ services:
     image: nginx:alpine
     container_name: gateway_nginx
     restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     ports:
       - "80:80"
       - "443:443"
