@@ -20,6 +20,11 @@ cmd_start() {
              "${DOCKWEB_ROOT}/certbot/www" \
              "${DOCKWEB_ROOT}/certbot/logs" \
              "${DOCKWEB_ROOT}/nginx/cache" \
+             "${DOCKWEB_ROOT}/nginx/cache/fastcgi_temp" \
+             "${DOCKWEB_ROOT}/nginx/cache/client_temp" \
+             "${DOCKWEB_ROOT}/nginx/cache/proxy_temp" \
+             "${DOCKWEB_ROOT}/nginx/cache/scgi_temp" \
+             "${DOCKWEB_ROOT}/nginx/cache/uwsgi_temp" \
              "${DOCKWEB_ROOT}/mysql/data" \
              "${DOCKWEB_ROOT}/mysql/init" \
              "${DOCKWEB_ROOT}/monitoring" \
@@ -36,7 +41,6 @@ cmd_start() {
     local current_user
     current_user=$(id -un)
     for dir in "${DOCKWEB_ROOT}/nginx/conf.d" \
-               "${DOCKWEB_ROOT}/nginx/cache" \
                "${DOCKWEB_ROOT}/logs" \
                "${DOCKWEB_ROOT}/cloudflare-certs"; do
         if [[ -d "$dir" ]] && [[ ! -w "$dir" ]]; then
@@ -45,6 +49,20 @@ cmd_start() {
                 || log_warn "Could not fix ${dir} — you may need to run: sudo chown -R ${current_user} ${dir}"
         fi
     done
+
+    # Nginx runs as uid 101 inside the alpine image. Because ./nginx/cache is
+    # bind-mounted over /var/cache/nginx, the image's built-in temp subdirs are
+    # shadowed — we create them above, then ensure uid 101 owns the tree so
+    # fastcgi_cache writes and temp-file spooling both work. Without this you
+    # get "mkdir() .../fastcgi_temp/0 failed" in error.log and 502s on every
+    # PHP request that spills out of the inline fastcgi_buffers.
+    local cache_owner
+    cache_owner=$(stat -c '%u' "${DOCKWEB_ROOT}/nginx/cache" 2>/dev/null || echo "")
+    if [[ "$cache_owner" != "101" ]]; then
+        log_info "Setting nginx cache ownership to uid 101 (nginx container user)..."
+        sudo chown -R 101:101 "${DOCKWEB_ROOT}/nginx/cache" 2>/dev/null \
+            || log_warn "Could not chown ${DOCKWEB_ROOT}/nginx/cache — run: sudo chown -R 101:101 ${DOCKWEB_ROOT}/nginx/cache"
+    fi
 
     # Make scripts executable
     chmod +x "${DOCKWEB_ROOT}/backup/backup.sh" \
