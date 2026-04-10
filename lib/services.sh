@@ -19,16 +19,41 @@ cmd_start() {
              "${DOCKWEB_ROOT}/certbot/conf" \
              "${DOCKWEB_ROOT}/certbot/www" \
              "${DOCKWEB_ROOT}/certbot/logs" \
-             "${DOCKWEB_ROOT}/nginx/cache" \
-             "${DOCKWEB_ROOT}/nginx/cache/fastcgi_temp" \
-             "${DOCKWEB_ROOT}/nginx/cache/client_temp" \
-             "${DOCKWEB_ROOT}/nginx/cache/proxy_temp" \
-             "${DOCKWEB_ROOT}/nginx/cache/scgi_temp" \
-             "${DOCKWEB_ROOT}/nginx/cache/uwsgi_temp" \
              "${DOCKWEB_ROOT}/mysql/data" \
              "${DOCKWEB_ROOT}/mysql/init" \
              "${DOCKWEB_ROOT}/monitoring" \
              "${DOCKWEB_ROOT}/cloudflare-certs"
+
+    # Nginx cache: bind-mounted over /var/cache/nginx in the alpine image.
+    # The image's built-in temp subdirs are shadowed by the bind mount, and
+    # nginx inside the container runs as uid 101 — so we create the subdirs
+    # here and ensure the whole tree is owned by uid 101. Without these dirs
+    # nginx fails with "mkdir() .../fastcgi_temp/N failed" and returns 502
+    # on every PHP response that spills out of the inline fastcgi_buffers.
+    local cache_dir="${DOCKWEB_ROOT}/nginx/cache"
+    local cache_subs=(fastcgi_temp client_temp proxy_temp scgi_temp uwsgi_temp)
+    local cache_sudo=""
+    [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
+    # If the dir already exists and is owned by nginx (uid 101), we can't
+    # mkdir into it as the current user — fall back to sudo.
+    [[ -w "$cache_dir" ]] || cache_sudo="sudo"
+    local sub missing_subs=0
+    for sub in "${cache_subs[@]}"; do
+        if [[ ! -d "$cache_dir/$sub" ]]; then
+            $cache_sudo mkdir -p "$cache_dir/$sub" \
+                || log_warn "Could not create ${cache_dir}/${sub}"
+            missing_subs=1
+        fi
+    done
+    # Ensure uid 101 owns the tree. Runs on first-time setup or whenever we
+    # just created subdirs as a different user (e.g. via sudo → root).
+    local cache_owner
+    cache_owner=$(stat -c '%u' "$cache_dir" 2>/dev/null || echo "")
+    if [[ "$cache_owner" != "101" ]] || [[ "$missing_subs" == "1" ]]; then
+        log_info "Setting nginx cache ownership to uid 101 (nginx container user)..."
+        sudo chown -R 101:101 "$cache_dir" 2>/dev/null \
+            || log_warn "Could not chown ${cache_dir} — run: sudo chown -R 101:101 ${cache_dir}"
+    fi
 
     while IFS= read -r domain; do
         [[ -z "$domain" ]] && continue
@@ -37,7 +62,9 @@ cmd_start() {
     done <<< "$sites"
 
     # Fix ownership of directories the script needs to write to
-    # (in case they were created by Docker or a previous sudo run)
+    # (in case they were created by Docker or a previous sudo run).
+    # Note: nginx/cache is intentionally excluded — it must stay owned by
+    # uid 101 (the nginx user inside the alpine image), handled above.
     local current_user
     current_user=$(id -un)
     for dir in "${DOCKWEB_ROOT}/nginx/conf.d" \
@@ -49,20 +76,6 @@ cmd_start() {
                 || log_warn "Could not fix ${dir} — you may need to run: sudo chown -R ${current_user} ${dir}"
         fi
     done
-
-    # Nginx runs as uid 101 inside the alpine image. Because ./nginx/cache is
-    # bind-mounted over /var/cache/nginx, the image's built-in temp subdirs are
-    # shadowed — we create them above, then ensure uid 101 owns the tree so
-    # fastcgi_cache writes and temp-file spooling both work. Without this you
-    # get "mkdir() .../fastcgi_temp/0 failed" in error.log and 502s on every
-    # PHP request that spills out of the inline fastcgi_buffers.
-    local cache_owner
-    cache_owner=$(stat -c '%u' "${DOCKWEB_ROOT}/nginx/cache" 2>/dev/null || echo "")
-    if [[ "$cache_owner" != "101" ]]; then
-        log_info "Setting nginx cache ownership to uid 101 (nginx container user)..."
-        sudo chown -R 101:101 "${DOCKWEB_ROOT}/nginx/cache" 2>/dev/null \
-            || log_warn "Could not chown ${DOCKWEB_ROOT}/nginx/cache — run: sudo chown -R 101:101 ${DOCKWEB_ROOT}/nginx/cache"
-    fi
 
     # Make scripts executable
     chmod +x "${DOCKWEB_ROOT}/backup/backup.sh" \
