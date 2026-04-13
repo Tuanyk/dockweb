@@ -59,6 +59,7 @@ services:
       --innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-512M}
       --max-connections=150
       --bind-address=0.0.0.0
+      --skip-log-bin
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-secret}
     volumes:
@@ -241,10 +242,16 @@ services:
   logrotate:
     image: alpine:latest
     container_name: logrotate
-    command: "/bin/sh -c 'apk add --no-cache logrotate && echo \"0 0 * * * /usr/sbin/logrotate /etc/logrotate.d/nginx\" >> /etc/crontabs/root && crond -f'"
+    command: "/bin/sh -c 'apk add --no-cache logrotate && echo \"0 0 * * * /usr/sbin/logrotate /etc/logrotate.d/*\" >> /etc/crontabs/root && crond -f'"
     volumes:
       - ./logs/nginx:/var/log/nginx
+      - ./logs/modsecurity:/var/log/modsecurity
+      - ./certbot/logs:/var/log/letsencrypt
+      - ./sites:/var/www/sites
       - ./logrotate/nginx:/etc/logrotate.d/nginx
+      - ./logrotate/modsecurity:/etc/logrotate.d/modsecurity
+      - ./logrotate/certbot:/etc/logrotate.d/certbot
+      - ./logrotate/wordpress:/etc/logrotate.d/wordpress
     networks:
       - web_network
     logging:
