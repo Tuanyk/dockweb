@@ -37,11 +37,12 @@ echo "Total RAM: ${TOTAL_RAM}MB"
 echo "Reserved for System: ${RESERVED_RAM}MB"
 echo "Available for Services: ${AVAILABLE_RAM}MB"
 
-# 2. MySQL (30% of Available RAM)
+# 2. MySQL (30% of Available RAM, clamped to fit 1G container cap)
 MYSQL_RAM=$((AVAILABLE_RAM * 30 / 100))
+if [ $MYSQL_RAM -gt 512 ]; then MYSQL_RAM=512; fi
 export MYSQL_INNODB_BUFFER_POOL_SIZE="${MYSQL_RAM}M"
 
-# 3. PHP (70% of Available RAM distributed)
+# 3. PHP (70% of Available RAM distributed, clamped to fit 768M container cap)
 TOTAL_PHP_RAM=$((AVAILABLE_RAM * 70 / 100))
 RAM_PER_CONTAINER=$((TOTAL_PHP_RAM / PHP_CONTAINERS))
 
@@ -49,7 +50,8 @@ RAM_PER_CONTAINER=$((TOTAL_PHP_RAM / PHP_CONTAINERS))
 PHP_AVG_PROC_SIZE=60
 CALCULATED_CHILDREN=$((RAM_PER_CONTAINER / PHP_AVG_PROC_SIZE))
 
-if [ $CALCULATED_CHILDREN -lt 4 ]; then CALCULATED_CHILDREN=4; fi
+if [ $CALCULATED_CHILDREN -lt 3 ]; then CALCULATED_CHILDREN=3; fi
+if [ $CALCULATED_CHILDREN -gt 6 ]; then CALCULATED_CHILDREN=6; fi
 
 export PHP_PM_MAX_CHILDREN=$CALCULATED_CHILDREN
 

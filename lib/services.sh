@@ -819,15 +819,17 @@ calculate_resources() {
     num_sites=$(site_count)
     [[ $num_sites -lt 1 ]] && num_sites=1
 
-    # MySQL: 30% of available RAM
+    # MySQL: 30% of available RAM, clamped to fit 1G container cap
     mysql_ram=$((available_ram * 30 / 100))
+    [[ $mysql_ram -gt 512 ]] && mysql_ram=512
     export MYSQL_INNODB_BUFFER_POOL_SIZE="${mysql_ram}M"
 
-    # PHP: 70% distributed across all site containers
+    # PHP: 70% distributed, clamped to fit 768M container cap (~6 workers × 128M)
     total_php_ram=$((available_ram * 70 / 100))
     ram_per_container=$((total_php_ram / num_sites))
     calculated_children=$((ram_per_container / 60))
-    [[ $calculated_children -lt 4 ]] && calculated_children=4
+    [[ $calculated_children -lt 3 ]] && calculated_children=3
+    [[ $calculated_children -gt 6 ]] && calculated_children=6
 
     export PHP_PM_MAX_CHILDREN=$calculated_children
 
