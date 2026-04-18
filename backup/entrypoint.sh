@@ -8,7 +8,7 @@ fi
 
 BACKUP_SCHEDULE="${BACKUP_SCHEDULE:-0 3 * * *}"
 
-echo "${BACKUP_SCHEDULE} /scripts/backup.sh >> /var/log/backup.log 2>&1" > /etc/crontabs/root
+echo "${BACKUP_SCHEDULE} /scripts/backup.sh >> /proc/1/fd/1 2>> /proc/1/fd/2" > /etc/crontabs/root
 
 echo "Backup scheduled: ${BACKUP_SCHEDULE}"
 

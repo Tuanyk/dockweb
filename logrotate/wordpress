@@ -7,5 +7,5 @@
     notifempty
     create 0640 www-data www-data
     copytruncate
-    size 10M
+    maxsize 10M
 }

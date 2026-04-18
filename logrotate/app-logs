@@ -1,0 +1,12 @@
+/var/www/sites/*/data/job-logs/*.log
+/var/www/sites/*/data/archetype-job-logs/*.log
+/var/www/sites/*/temp/*.log {
+    daily
+    missingok
+    rotate 7
+    maxsize 10M
+    compress
+    delaycompress
+    notifempty
+    copytruncate
+}

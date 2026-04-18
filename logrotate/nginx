@@ -2,6 +2,7 @@
     daily
     missingok
     rotate 7
+    maxsize 50M
     compress
     delaycompress
     notifempty
