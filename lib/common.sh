@@ -176,9 +176,15 @@ check_dependencies() {
 }
 
 is_running() {
-    local cmd
+    # `docker compose ps -q --status running` prints one container ID per
+    # running service and nothing else — robust across compose versions,
+    # unlike grepping the human-readable STATUS column ("Up 5 minutes" vs
+    # "running" depending on version). `|| true` stops a non-zero exit
+    # from compose (e.g. no project yet) from tripping `set -e`.
+    local cmd ids
     cmd="$(docker_compose_cmd)"
-    $cmd ps --status running 2>/dev/null | grep -q "Up\|running" 2>/dev/null
+    ids=$($cmd ps -q --status running 2>/dev/null || true)
+    [[ -n "$ids" ]]
 }
 
 ensure_sites_compose() {
