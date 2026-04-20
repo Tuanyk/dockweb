@@ -120,6 +120,9 @@ sites_in_container() {
         d=$(grep '^DOMAIN=' "$conf" | cut -d= -f2)
         [[ "$c" == "$container" ]] && echo "$d"
     done
+    # Don't leak the last `[[ ]]` test's exit status — callers run under
+    # `set -e`, and a final non-match (exit 1) would kill the script.
+    return 0
 }
 
 docker_compose_cmd() {
