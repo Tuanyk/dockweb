@@ -159,11 +159,14 @@ CONFEOF
         # recreated with a stale .env value.
         calculate_resources
         log_info "Bringing up PHP container '${php_container}'..."
-        # --no-deps: don't restart mysql/redis, just this container
-        # --build: uses cached image layers if Dockerfile unchanged (fast)
-        # If this is a shared container, compose will detect the new volume
-        # mount and recreate it — other sites on it get a brief restart.
-        $cmd up -d --no-deps --build "$php_container"
+        # --no-deps: don't restart mysql/redis, just this container.
+        # --build: uses cached image layers if Dockerfile unchanged (fast).
+        # --force-recreate: compose's config-drift detection doesn't always
+        # notice new bind mounts on an existing container, so force it. For a
+        # brand-new container this is a no-op; for a shared container the
+        # sibling sites get a brief (~2s) restart while the new mount is
+        # applied — unavoidable if we want the new site to actually work.
+        $cmd up -d --no-deps --build --force-recreate "$php_container"
         docker exec gateway_nginx nginx -s reload 2>/dev/null || true
         log_success "PHP container ready."
     else
