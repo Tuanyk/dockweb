@@ -60,14 +60,22 @@ cmd_site_add() {
     esac
 
     # Step 3: Auto-generate values
-    local sanitized php_container db_name db_user db_pass
+    local sanitized db_name db_user db_pass
     sanitized=$(sanitize_domain "$domain")
-    php_container="php_${sanitized}"
     db_name="${sanitized}_db"
     db_user="${sanitized}_user"
     db_pass=$(generate_password)
 
-    # Step 4: Confirm
+    # Step 4: Pick PHP container — create new (isolated) or share an existing one
+    local php_container share_note=""
+    php_container=$(_pick_php_container "$sanitized") || return 1
+    if _container_is_shared_target "$php_container"; then
+        local members
+        members=$(sites_in_container "$php_container" | paste -sd',' -)
+        share_note="(shared with: $members — they will briefly restart)"
+    fi
+
+    # Step 5: Confirm
     echo ""
     echo -e "  ${BOLD}Summary:${NC}"
     echo "  ──────────────────────────────────────"
@@ -76,7 +84,7 @@ cmd_site_add() {
     if [[ "$ssl_mode" == "dev" ]]; then
         echo "  Local Domain:   $(get_local_domain "$domain")  ← add to /etc/hosts"
     fi
-    echo "  PHP Container:  $php_container"
+    echo "  PHP Container:  $php_container ${share_note}"
     echo "  Database:       $db_name"
     echo "  DB User:        $db_user"
     echo "  DB Password:    $db_pass"
@@ -140,19 +148,19 @@ CONFEOF
         log_info "Start services first, then run: dockweb ssl install-le $domain"
     fi
 
-    # Step 11: Start new container if stack is already running
+    # Step 11: Start / recreate the PHP container if the stack is already running
     if is_running; then
         echo ""
         local cmd
         cmd="$(docker_compose_cmd)"
-        local service_name
-        service_name=$(sanitize_domain "$domain")
-        log_info "Starting PHP container for ${domain}..."
-        # --no-deps: don't restart mysql/redis, just the new site container
+        log_info "Bringing up PHP container '${php_container}'..."
+        # --no-deps: don't restart mysql/redis, just this container
         # --build: uses cached image layers if Dockerfile unchanged (fast)
-        $cmd up -d --no-deps --build "$service_name"
+        # If this is a shared container, compose will detect the new volume
+        # mount and recreate it — other sites on it get a brief restart.
+        $cmd up -d --no-deps --build "$php_container"
         docker exec gateway_nginx nginx -s reload 2>/dev/null || true
-        log_success "PHP container started."
+        log_success "PHP container ready."
     else
         log_info "Run 'dockweb start' to bring up all services."
     fi
@@ -181,6 +189,63 @@ CONFEOF
     fi
 }
 
+# Interactive picker: returns a PHP container name on stdout.
+# If no containers exist yet, silently returns a fresh "php_<sanitized>".
+_pick_php_container() {
+    local sanitized="$1"
+    local existing
+    existing=$(list_php_containers)
+
+    if [[ -z "$existing" ]]; then
+        echo "php_${sanitized}"
+        return 0
+    fi
+
+    # Emit the menu to stderr so stdout stays clean for the caller.
+    {
+        echo ""
+        echo "  PHP Container:"
+        echo "    1) Create new (isolated)  -> php_${sanitized}"
+        local i=2
+        while IFS= read -r c; do
+            [[ -z "$c" ]] && continue
+            local member_list
+            member_list=$(sites_in_container "$c" | paste -sd',' -)
+            echo "    ${i}) Share with ${c}  (hosts: ${member_list})"
+            ((i++))
+        done <<< "$existing"
+        echo ""
+        echo -n "  Choose [1-$((i-1))]: "
+    } >&2
+
+    local choice
+    read -r choice
+
+    if [[ "$choice" == "1" ]]; then
+        echo "php_${sanitized}"
+        return 0
+    fi
+
+    local idx=2
+    while IFS= read -r c; do
+        [[ -z "$c" ]] && continue
+        if [[ "$choice" == "$idx" ]]; then
+            echo "$c"
+            return 0
+        fi
+        ((idx++))
+    done <<< "$existing"
+
+    log_error "Invalid choice."
+    return 1
+}
+
+# True if $1 is a container already referenced by at least one existing site.
+_container_is_shared_target() {
+    local container="$1"
+    list_php_containers | grep -qx "$container"
+}
+
 cmd_site_remove() {
     local domain="${1:-}"
     if [[ -z "$domain" ]]; then
@@ -196,25 +261,52 @@ cmd_site_remove() {
     local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
     get_site_conf "$domain"
 
+    # Are any other sites sharing this PHP container?
+    local siblings
+    siblings=$(sites_in_container "$PHP_CONTAINER" | grep -vx "$domain" || true)
+
+    local container_action
+    if [[ -n "$siblings" ]]; then
+        container_action="Keep '${PHP_CONTAINER}' running (shared with: $(echo "$siblings" | paste -sd',' -)); just unmount this site"
+    else
+        container_action="Stop and remove container '${PHP_CONTAINER}' (this site is the only member)"
+    fi
+
     if ! confirm_dangerous \
         "Remove site '${domain}'" \
-        "Container ${PHP_CONTAINER} stopped, nginx config deleted, database ${DB_NAME} optionally dropped" \
+        "${container_action}. Nginx config deleted; database ${DB_NAME} optionally dropped" \
         "Site goes offline immediately"; then
         log_info "Cancelled."
         return 0
     fi
 
-    # Stop PHP container if running
-    if is_running; then
-        local cmd
-        cmd="$(docker_compose_cmd)"
-        docker stop "$PHP_CONTAINER" 2>/dev/null || true
-        docker rm "$PHP_CONTAINER" 2>/dev/null || true
-    fi
+    # Remove the site conf first so generate_sites_compose + list_php_containers
+    # see the new state.
+    rm -f "${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf"
 
     # Remove nginx config
     rm -f "${DOCKWEB_ROOT}/nginx/conf.d/${domain}.conf"
     log_success "Nginx config removed."
+
+    # Regenerate compose *before* touching containers so the new definitions
+    # are in place for `up -d`.
+    generate_sites_compose
+
+    if [[ -z "$siblings" ]]; then
+        # Sole member — stop + remove the container outright.
+        if is_running; then
+            docker stop "$PHP_CONTAINER" 2>/dev/null || true
+            docker rm "$PHP_CONTAINER" 2>/dev/null || true
+        fi
+    else
+        # Shared container — recreate so the removed volume mount drops off.
+        if is_running; then
+            local cmd
+            cmd="$(docker_compose_cmd)"
+            log_info "Recreating shared container '${PHP_CONTAINER}' without this site's mount..."
+            $cmd up -d --no-deps "$PHP_CONTAINER"
+        fi
+    fi
 
     # Optionally drop database
     if confirm "  Also drop database '$DB_NAME'?" "n"; then
@@ -229,18 +321,13 @@ cmd_site_remove() {
     if confirm "  Also delete site files in sites/${domain}/?" "n"; then
         rm -rf "${DOCKWEB_ROOT}/sites/${domain}"
         log_success "Site files deleted."
-    else
-        rm -f "${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf"
     fi
 
-    # Regenerate compose
-    generate_sites_compose
-
-    # Reload if running
+    # Reload nginx so stale upstream IPs are flushed
     if is_running; then
         local cmd
         cmd="$(docker_compose_cmd)"
-        $cmd up -d --remove-orphans
+        $cmd up -d --remove-orphans >/dev/null 2>&1 || true
         docker exec gateway_nginx nginx -s reload 2>/dev/null || true
     fi
 
@@ -250,8 +337,8 @@ cmd_site_remove() {
 generate_sites_compose() {
     local output="${DOCKWEB_ROOT}/docker-compose.sites.yml"
     local tmp="${output}.tmp"
-    local sites
-    sites=$(list_all_sites)
+    local containers
+    containers=$(list_php_containers)
 
     cat > "$tmp" <<'HEADER'
 # Auto-generated by dockweb - DO NOT EDIT MANUALLY
@@ -259,7 +346,7 @@ generate_sites_compose() {
 
 HEADER
 
-    if [[ -z "$sites" ]]; then
+    if [[ -z "$containers" ]]; then
         cat >> "$tmp" <<'EMPTY'
 services: {}
 
@@ -273,21 +360,13 @@ EMPTY
 
     echo "services:" >> "$tmp"
 
-    while IFS= read -r d; do
-        [[ -z "$d" ]] && continue
-        local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
-        get_site_conf "$d" || continue
-
-        local service_name
-        service_name=$(sanitize_domain "$d")
-
-        sed \
-            -e "s|{{SERVICE_NAME}}|${service_name}|g" \
-            -e "s|{{CONTAINER_NAME}}|${PHP_CONTAINER}|g" \
-            -e "s|{{DOMAIN}}|${d}|g" \
-            "${DOCKWEB_ROOT}/templates/php-service.yml.tpl" >> "$tmp"
+    local container_total=0
+    while IFS= read -r c; do
+        [[ -z "$c" ]] && continue
+        container_total=$((container_total + 1))
+        _emit_php_service "$c" >> "$tmp"
         echo "" >> "$tmp"
-    done <<< "$sites"
+    done <<< "$containers"
 
     cat >> "$tmp" <<'FOOTER'
 networks:
@@ -296,7 +375,67 @@ networks:
 FOOTER
 
     mv "$tmp" "$output"
-    log_success "docker-compose.sites.yml updated ($(echo "$sites" | wc -l) site(s))."
+    local site_total
+    site_total=$(site_count)
+    log_success "docker-compose.sites.yml updated (${container_total} PHP container(s), ${site_total} site(s))."
+}
+
+# Emit one service block for a PHP container with all its mounted sites.
+# Service name == container_name so that restart/update commands can target
+# either interchangeably.
+_emit_php_service() {
+    local container="$1"
+    local domains site_names
+    domains=$(sites_in_container "$container")
+    site_names=$(echo "$domains" | paste -sd',' -)
+
+    cat <<SERVICE
+  ${container}:
+    build:
+      context: ./php
+      args:
+        PHP_UID: \${PHP_UID:-1000}
+        PHP_GID: \${PHP_GID:-1000}
+    container_name: ${container}
+    restart: unless-stopped
+    environment:
+      PM_MAX_CHILDREN: \${PHP_PM_MAX_CHILDREN:-3}
+      SITE_NAMES: "${site_names}"
+    volumes:
+SERVICE
+
+    while IFS= read -r d; do
+        [[ -z "$d" ]] && continue
+        echo "      - ./sites/${d}:/var/www/sites/${d}"
+    done <<< "$domains"
+
+    cat <<SERVICE
+      - ./logs/php/${container}:/var/log
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - web_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm-healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '1.0'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+SERVICE
 }
 
 generate_nginx_conf() {

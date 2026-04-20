@@ -97,6 +97,31 @@ site_count() {
     list_all_sites | wc -l
 }
 
+# Unique PHP container names currently referenced by any site
+list_php_containers() {
+    local conf c
+    local -a containers=()
+    for conf in "${DOCKWEB_ROOT}"/sites/*/.dockweb.conf; do
+        [[ -f "$conf" ]] || continue
+        c=$(grep '^PHP_CONTAINER=' "$conf" | cut -d= -f2)
+        [[ -n "$c" ]] && containers+=("$c")
+    done
+    [[ ${#containers[@]} -eq 0 ]] && return 0
+    printf '%s\n' "${containers[@]}" | sort -u
+}
+
+# Domains hosted by a given PHP container (one per line)
+sites_in_container() {
+    local container="$1"
+    local conf c d
+    for conf in "${DOCKWEB_ROOT}"/sites/*/.dockweb.conf; do
+        [[ -f "$conf" ]] || continue
+        c=$(grep '^PHP_CONTAINER=' "$conf" | cut -d= -f2)
+        d=$(grep '^DOMAIN=' "$conf" | cut -d= -f2)
+        [[ "$c" == "$container" ]] && echo "$d"
+    done
+}
+
 docker_compose_cmd() {
     echo "docker compose -f ${DOCKWEB_ROOT}/docker-compose.yml -f ${DOCKWEB_ROOT}/docker-compose.sites.yml"
 }
@@ -105,8 +130,9 @@ generate_password() {
     openssl rand -base64 24 | tr -d '/+=' | head -c 32
 }
 
-# Map user-friendly name to docker compose service name
-# Accepts: nginx, mysql, redis, domain name, or sanitized domain
+# Map user-friendly name to docker compose service name.
+# Accepts: nginx, mysql, redis, a domain name, or a PHP container name.
+# For a domain, returns its PHP_CONTAINER value (the compose service name).
 resolve_service() {
     local input="$1"
     case "$input" in
@@ -117,16 +143,15 @@ resolve_service() {
     esac
     # Try as domain name
     if [[ -f "${DOCKWEB_ROOT}/sites/${input}/.dockweb.conf" ]]; then
-        sanitize_domain "$input"
+        grep '^PHP_CONTAINER=' "${DOCKWEB_ROOT}/sites/${input}/.dockweb.conf" | cut -d= -f2
         return 0
     fi
-    # Try as already-sanitized service name (check if any site maps to it)
-    local conf
+    # Try as a PHP container name that some site references
+    local conf c
     for conf in "${DOCKWEB_ROOT}"/sites/*/.dockweb.conf; do
         [[ -f "$conf" ]] || continue
-        local domain
-        domain=$(grep '^DOMAIN=' "$conf" | cut -d= -f2)
-        if [[ "$(sanitize_domain "$domain")" == "$input" ]]; then
+        c=$(grep '^PHP_CONTAINER=' "$conf" | cut -d= -f2)
+        if [[ "$c" == "$input" ]]; then
             echo "$input"
             return 0
         fi

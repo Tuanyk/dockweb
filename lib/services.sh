@@ -201,29 +201,18 @@ cmd_restart() {
             log_success "Nginx restarted."
             ;;
         *)
-            # PHP site container — find the container name
-            local domain=""
-            local conf
-            for conf in "${DOCKWEB_ROOT}"/sites/*/.dockweb.conf; do
-                [[ -f "$conf" ]] || continue
-                local d
-                d=$(grep '^DOMAIN=' "$conf" | cut -d= -f2)
-                if [[ "$(sanitize_domain "$d")" == "$service" ]]; then
-                    domain="$d"
-                    break
-                fi
-            done
-            if [[ -z "$domain" ]]; then
-                header "Restarting ${service}"
-                $cmd restart "$service"
-                log_success "${service} restarted."
+            # PHP container (possibly shared by multiple sites). $service is
+            # already the PHP_CONTAINER value thanks to resolve_service().
+            local members
+            members=$(sites_in_container "$service" | paste -sd',' -)
+            if [[ -n "$members" ]]; then
+                header "Restarting PHP container ${service} (hosts: ${members})"
             else
-                get_site_conf "$domain"
-                header "Restarting PHP for ${domain}"
-                $cmd restart "$service"
-                _wait_healthy "$PHP_CONTAINER" 60
-                log_success "PHP for ${domain} restarted."
+                header "Restarting ${service}"
             fi
+            $cmd restart "$service"
+            _wait_healthy "$service" 60
+            log_success "${service} restarted."
             ;;
     esac
 }
@@ -268,7 +257,7 @@ cmd_update() {
 
     # 1. Infrastructure services (safe, no user impact)
     log_info "Updating infrastructure services..."
-    for svc in fail2ban logrotate certbot adminer monitor modsecurity; do
+    for svc in fail2ban logrotate certbot adminer monitor; do
         $cmd up -d --no-deps "$svc" 2>/dev/null || true
     done
     log_success "Infrastructure services updated."
@@ -284,24 +273,22 @@ cmd_update() {
         log_info "Skipping Redis."
     fi
 
-    # 3. PHP containers — one site at a time (rolling)
+    # 3. PHP containers — one container at a time (rolling). Shared
+    # containers only rebuild once even if they host multiple sites.
     echo ""
     log_info "Updating PHP containers (rolling, one at a time)..."
-    local sites
-    sites=$(list_all_sites)
-    while IFS= read -r domain; do
-        [[ -z "$domain" ]] && continue
-        local service_name
-        service_name=$(sanitize_domain "$domain")
-        log_info "Updating PHP for ${domain}..."
-        $cmd up -d --no-deps --build "$service_name"
-        # Re-source to get PHP_CONTAINER for this domain
-        local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
-        get_site_conf "$domain"
-        _wait_healthy "$PHP_CONTAINER" 60
+    local containers
+    containers=$(list_php_containers)
+    while IFS= read -r c; do
+        [[ -z "$c" ]] && continue
+        local members
+        members=$(sites_in_container "$c" | paste -sd',' -)
+        log_info "Updating ${c} (hosts: ${members})..."
+        $cmd up -d --no-deps --build "$c"
+        _wait_healthy "$c" 60
         _reload_nginx_upstreams
-        log_success "${domain} updated and healthy."
-    done <<< "$sites"
+        log_success "${c} updated and healthy."
+    done <<< "$containers"
 
     # 4. Nginx
     echo ""
@@ -373,24 +360,11 @@ _update_single_service() {
             log_success "Nginx updated."
             ;;
         *)
-            # PHP site or infrastructure service
+            # PHP container (service name == container name) or infrastructure.
             header "Updating ${service}"
             $cmd up -d --no-deps --build "$service"
-            # Try to find container name for health check
-            local domain=""
-            local conf
-            for conf in "${DOCKWEB_ROOT}"/sites/*/.dockweb.conf; do
-                [[ -f "$conf" ]] || continue
-                local d
-                d=$(grep '^DOMAIN=' "$conf" | cut -d= -f2)
-                if [[ "$(sanitize_domain "$d")" == "$service" ]]; then
-                    domain="$d"
-                    break
-                fi
-            done
-            if [[ -n "$domain" ]]; then
-                get_site_conf "$domain"
-                _wait_healthy "$PHP_CONTAINER" 60
+            if list_php_containers | grep -qx "$service"; then
+                _wait_healthy "$service" 60
                 _reload_nginx_upstreams
             fi
             log_success "${service} updated."
