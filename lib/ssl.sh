@@ -130,8 +130,42 @@ cmd_ssl_menu() {
 }
 
 _get_base_domain() {
-    # example.com from sub.example.com, or example.com from example.com
+    # example.com from sub.example.com, or example.com from example.com.
+    # NOTE: naive — assumes a single-label TLD. Wrong for multi-label
+    # public suffixes (io.vn, co.uk, com.au, …). Use _resolve_cf_zone
+    # for Cloudflare lookups; this helper is kept for non-API callers.
     echo "$1" | awk -F. '{print $(NF-1)"."$NF}'
+}
+
+# Walk candidate parent domains longest-first and return the first one that
+# Cloudflare recognizes as a zone. Echoes "<zone_id> <zone_name>" on stdout.
+# Handles multi-label public suffixes (foo.io.vn, site.co.uk, …) without
+# needing a Public Suffix List — we just ask Cloudflare.
+_resolve_cf_zone() {
+    local domain="$1"
+    local token="$2"
+    local candidate="$domain" response success zone_id
+    while [[ "$candidate" == *.*.* || "$candidate" == *.* ]]; do
+        response=$(curl -s -X GET \
+            "https://api.cloudflare.com/client/v4/zones?name=${candidate}" \
+            -H "Authorization: Bearer ${token}" \
+            -H "Content-Type: application/json")
+        success=$(echo "$response" | _extract_json_bool "success")
+        if [[ "$success" == "true" ]]; then
+            zone_id=$(echo "$response" \
+                | grep -o '"id":"[^"]*"' | head -1 \
+                | sed 's/"id":"//;s/"//')
+            if [[ -n "$zone_id" ]]; then
+                echo "${zone_id} ${candidate}"
+                return 0
+            fi
+        fi
+        # Strip the leftmost label and try the parent. Stop when only the
+        # TLD (one label) would remain.
+        [[ "$candidate" != *.*.* ]] && break
+        candidate="${candidate#*.}"
+    done
+    return 1
 }
 
 _extract_json_value() {
@@ -161,33 +195,19 @@ cloudflare_api_install_cert() {
         return 1
     fi
 
-    local base_domain
-    base_domain=$(_get_base_domain "$domain")
-
     # Auto-detect zone ID if not set
     local zone_id="${CLOUDFLARE_ZONE_ID:-}"
     if [[ -z "$zone_id" ]]; then
-        log_info "Zone ID not set, auto-detecting for ${base_domain}..."
-        local zone_response
-        zone_response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${base_domain}" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -H "Content-Type: application/json")
-
-        local zone_success
-        zone_success=$(echo "$zone_response" | _extract_json_bool "success")
-        if [[ "$zone_success" != "true" ]]; then
-            log_error "Failed to query Cloudflare zones API."
-            log_info "You may need to set CLOUDFLARE_ZONE_ID manually in .env"
-            return 1
-        fi
-
-        zone_id=$(echo "$zone_response" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
-        if [[ -z "$zone_id" ]]; then
-            log_error "Could not find zone for ${base_domain}."
+        log_info "Zone ID not set, auto-detecting zone for ${domain}..."
+        local resolved zone_name
+        if ! resolved=$(_resolve_cf_zone "$domain" "${CLOUDFLARE_API_TOKEN}"); then
+            log_error "Could not find a Cloudflare zone covering ${domain}."
             log_info "Set CLOUDFLARE_ZONE_ID manually in .env"
             return 1
         fi
-        log_success "Found zone ID: ${zone_id}"
+        zone_id="${resolved%% *}"
+        zone_name="${resolved#* }"
+        log_success "Found zone: ${zone_name} (${zone_id})"
     fi
 
     # Generate private key and CSR locally
