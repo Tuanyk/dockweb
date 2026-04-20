@@ -57,9 +57,17 @@ cmd_start() {
 
     while IFS= read -r domain; do
         [[ -z "$domain" ]] && continue
-        mkdir -p "${DOCKWEB_ROOT}/logs/php/${domain}"
         mkdir -p "${DOCKWEB_ROOT}/sites/${domain}/public"
     done <<< "$sites"
+
+    # PHP log dirs are per-container (shared containers collect logs for all
+    # mounted sites under one host path).
+    local _php_containers
+    _php_containers=$(list_php_containers)
+    while IFS= read -r _c; do
+        [[ -z "$_c" ]] && continue
+        mkdir -p "${DOCKWEB_ROOT}/logs/php/${_c}"
+    done <<< "$_php_containers"
 
     # Fix ownership of directories the script needs to write to
     # (in case they were created by Docker or a previous sudo run).
@@ -784,23 +792,27 @@ _wait_healthy() {
 
 calculate_resources() {
     local total_ram available_ram reserved_ram=800
-    local num_sites mysql_ram total_php_ram ram_per_container calculated_children
+    local num_containers num_sites mysql_ram total_php_ram ram_per_container calculated_children
 
     total_ram=$(free -m | awk '/^Mem:/{print $2}')
     available_ram=$((total_ram - reserved_ram))
     [[ $available_ram -le 0 ]] && available_ram=500
 
+    # Size PHP by number of *containers*, not sites — one shared container
+    # hosting N sites still runs a single pool of workers.
+    num_containers=$(list_php_containers | wc -l)
     num_sites=$(site_count)
-    [[ $num_sites -lt 1 ]] && num_sites=1
+    [[ $num_containers -lt 1 ]] && num_containers=1
 
     # MySQL: 30% of available RAM, clamped to fit 1G container cap
     mysql_ram=$((available_ram * 30 / 100))
     [[ $mysql_ram -gt 512 ]] && mysql_ram=512
     export MYSQL_INNODB_BUFFER_POOL_SIZE="${mysql_ram}M"
 
-    # PHP: 70% distributed, clamped to fit 768M container cap (~6 workers × 128M)
+    # PHP: 70% distributed across containers, clamped to fit 768M container cap
+    # (~6 workers × 128M). 60MB per worker is a conservative WordPress estimate.
     total_php_ram=$((available_ram * 70 / 100))
-    ram_per_container=$((total_php_ram / num_sites))
+    ram_per_container=$((total_php_ram / num_containers))
     calculated_children=$((ram_per_container / 60))
     [[ $calculated_children -lt 3 ]] && calculated_children=3
     [[ $calculated_children -gt 6 ]] && calculated_children=6
@@ -810,6 +822,6 @@ calculate_resources() {
     echo ""
     log_info "Total RAM: ${total_ram}MB | Available: ${available_ram}MB"
     log_info "MySQL Buffer Pool: ${mysql_ram}MB"
-    log_info "PHP sites: ${num_sites} | Max children/site: ${calculated_children}"
+    log_info "PHP containers: ${num_containers} (${num_sites} sites) | Max children/container: ${calculated_children}"
     echo ""
 }

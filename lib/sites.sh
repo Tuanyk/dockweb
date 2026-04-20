@@ -101,7 +101,8 @@ cmd_site_add() {
     # Step 5: Create directories
     log_info "Creating site directories..."
     mkdir -p "${DOCKWEB_ROOT}/sites/${domain}/public"
-    mkdir -p "${DOCKWEB_ROOT}/logs/php/${domain}"
+    # PHP log dir is per-container (matches the compose mount below)
+    mkdir -p "${DOCKWEB_ROOT}/logs/php/${php_container}"
 
     # Placeholder index (only if no index.php exists yet)
     if [[ ! -f "${DOCKWEB_ROOT}/sites/${domain}/public/index.php" ]]; then
@@ -153,6 +154,10 @@ CONFEOF
         echo ""
         local cmd
         cmd="$(docker_compose_cmd)"
+        # Recalculate PM_MAX_CHILDREN against the new topology before bringing
+        # the container up, otherwise a newly shared container would be
+        # recreated with a stale .env value.
+        calculate_resources
         log_info "Bringing up PHP container '${php_container}'..."
         # --no-deps: don't restart mysql/redis, just this container
         # --build: uses cached image layers if Dockerfile unchanged (fast)
@@ -303,6 +308,9 @@ cmd_site_remove() {
         if is_running; then
             local cmd
             cmd="$(docker_compose_cmd)"
+            # Recompute sizing so the recreated container doesn't pick up a
+            # stale PM_MAX_CHILDREN from .env.
+            calculate_resources
             log_info "Recreating shared container '${PHP_CONTAINER}' without this site's mount..."
             $cmd up -d --no-deps "$PHP_CONTAINER"
         fi
