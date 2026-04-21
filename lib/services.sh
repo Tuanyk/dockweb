@@ -95,8 +95,11 @@ cmd_start() {
     # Calculate resources
     calculate_resources
 
-    # Regenerate sites compose
+    # Regenerate sites compose and nginx confs from the current templates.
+    # This way, pulling template updates and running `dockweb start` is enough
+    # to roll them out — no need to re-add or manually edit per-site confs.
     generate_sites_compose
+    regenerate_all_nginx_confs
 
     # Security check
     if grep -q 'secret\|changeme\|CHANGE' "${DOCKWEB_ROOT}/.env" 2>/dev/null; then
@@ -391,13 +394,86 @@ cmd_cache() {
         clear-nginx) cmd_cache_clear_nginx "$arg" ;;
         clear-php)   cmd_cache_clear_php "$arg" ;;
         status)      cmd_cache_status ;;
+        on)          cmd_cache_on "$arg" ;;
+        off)         cmd_cache_off "$arg" ;;
         "")          menu_cache ;;
         *)
             log_error "Unknown cache command: $subcmd"
-            echo "  Usage: dockweb cache {clear|clear-nginx|clear-php|status}"
+            echo "  Usage: dockweb cache {on|off|clear|clear-nginx|clear-php|status} [domain]"
             return 1
             ;;
     esac
+}
+
+# Toggle per-site FastCGI cache on/off. Rewrites .dockweb.conf, regenerates
+# the site's nginx conf, reloads nginx, and purges any existing cache when
+# turning off so stale entries don't keep serving.
+_cache_set_enabled() {
+    local domain="$1"
+    local value="$2"   # "true" or "false"
+    local conf="${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf"
+
+    if [[ ! -f "$conf" ]]; then
+        log_error "Site not found: $domain"
+        return 1
+    fi
+
+    local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" \
+          DOMAIN="" CACHE_ENABLED=""
+    get_site_conf "$domain" || { log_error "Failed to read config for $domain"; return 1; }
+
+    if [[ "$SSL_MODE" != "cloudflare" && "$SSL_MODE" != "letsencrypt" ]]; then
+        log_warn "FastCGI cache is only active for cloudflare/letsencrypt SSL modes."
+        log_info "Current mode: $SSL_MODE — nothing to toggle."
+        return 0
+    fi
+
+    # Rewrite / append CACHE_ENABLED in place.
+    if grep -q '^CACHE_ENABLED=' "$conf"; then
+        sed -i "s/^CACHE_ENABLED=.*/CACHE_ENABLED=${value}/" "$conf"
+    else
+        echo "CACHE_ENABLED=${value}" >> "$conf"
+    fi
+
+    log_info "Regenerating nginx config for ${domain}..."
+    generate_nginx_conf "$DOMAIN" "$SSL_MODE" "$PHP_CONTAINER" "$value"
+
+    # Reload nginx if running. Keep it quiet — nginx -s reload writes to
+    # stderr on success too, which looks alarming.
+    if docker ps --format '{{.Names}}' | grep -q '^gateway_nginx$'; then
+        docker exec gateway_nginx nginx -s reload 2>/dev/null \
+            && log_success "Nginx reloaded."
+    fi
+
+    # When turning cache off, purge existing entries so the change is
+    # immediate rather than waiting for TTL expiry.
+    if [[ "$value" == "false" ]]; then
+        _purge_nginx_cache
+    fi
+
+    if [[ "$value" == "true" ]]; then
+        log_success "FastCGI cache enabled for ${domain}."
+    else
+        log_success "FastCGI cache disabled for ${domain}."
+    fi
+}
+
+cmd_cache_on() {
+    local domain="${1:-}"
+    if [[ -z "$domain" ]]; then
+        log_error "Usage: dockweb cache on <domain>"
+        return 1
+    fi
+    _cache_set_enabled "$domain" "true"
+}
+
+cmd_cache_off() {
+    local domain="${1:-}"
+    if [[ -z "$domain" ]]; then
+        log_error "Usage: dockweb cache off <domain>"
+        return 1
+    fi
+    _cache_set_enabled "$domain" "false"
 }
 
 # Backward compat alias
@@ -560,7 +636,8 @@ menu_cache() {
     if [[ -n "$sites" ]]; then
         while IFS= read -r site; do
             [[ -z "$site" ]] && continue
-            local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
+            local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" \
+                  DOMAIN="" CACHE_ENABLED=""
             if get_site_conf "$site"; then
                 local mem
                 mem=$(docker exec "$PHP_CONTAINER" php -r '
@@ -571,25 +648,32 @@ menu_cache() {
                         echo "${used}/${total} MB";
                     } else { echo "off"; }
                 ' 2>/dev/null)
-                echo -e "  PHP OPcache (${site}): ${mem:-N/A}"
+                local fcgi="${CACHE_ENABLED:-true}"
+                [[ "$fcgi" == "true" ]]  && fcgi="on"
+                [[ "$fcgi" == "false" ]] && fcgi="off"
+                echo -e "  ${site} — OPcache: ${mem:-N/A} | FastCGI: ${fcgi}"
             fi
         done <<< "$sites"
     fi
 
     echo ""
-    echo "  Which cache to clear?"
-    echo "    1) Nginx cache only"
-    echo "    2) PHP OPcache only"
-    echo "    3) Both (nginx + PHP)"
+    echo "  Action?"
+    echo "    1) Clear nginx FastCGI cache"
+    echo "    2) Clear PHP OPcache"
+    echo "    3) Clear both (nginx + PHP)"
+    echo "    4) Enable FastCGI cache for a site"
+    echo "    5) Disable FastCGI cache for a site"
     echo "    0) Back"
     echo ""
-    echo -ne "  Choose [0-3]: "
+    echo -ne "  Choose [0-5]: "
     read -r layer_choice
 
     case "$layer_choice" in
         1) cmd_cache_clear_nginx ;;
         2) _menu_cache_pick_site "php" ;;
         3) _menu_cache_pick_site "both" ;;
+        4) _menu_cache_pick_site "toggle-on" ;;
+        5) _menu_cache_pick_site "toggle-off" ;;
         0) return ;;
         *) log_error "Invalid choice." ;;
     esac
@@ -605,11 +689,24 @@ _menu_cache_pick_site() {
         return 1
     fi
 
+    # Toggle actions only make sense for a specific site — hide the
+    # "All sites" option for those modes.
+    local allow_all=true
+    case "$mode" in
+        toggle-on|toggle-off) allow_all=false ;;
+    esac
+
     echo ""
-    echo "  Clear for which site?"
-    echo "    0) All sites"
+    if [[ "$mode" == "toggle-on" || "$mode" == "toggle-off" ]]; then
+        echo "  Which site?"
+    else
+        echo "  Clear for which site?"
+    fi
     local i=1
     local site_arr=()
+    if $allow_all; then
+        echo "    0) All sites"
+    fi
     while IFS= read -r site; do
         [[ -z "$site" ]] && continue
         echo "    ${i}) ${site}"
@@ -617,11 +714,13 @@ _menu_cache_pick_site() {
         ((i++))
     done <<< "$sites"
     echo ""
-    echo -ne "  Choose [0-$((i-1))]: "
+    local lo=1
+    $allow_all && lo=0
+    echo -ne "  Choose [${lo}-$((i-1))]: "
     read -r choice
 
     local domain=""
-    if [[ "$choice" == "0" ]]; then
+    if $allow_all && [[ "$choice" == "0" ]]; then
         domain=""
     elif [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#site_arr[@]} )); then
         domain="${site_arr[$((choice-1))]}"
@@ -631,8 +730,10 @@ _menu_cache_pick_site() {
     fi
 
     case "$mode" in
-        php)  cmd_cache_clear_php "$domain" ;;
-        both) cmd_cache_clear "$domain" ;;
+        php)        cmd_cache_clear_php "$domain" ;;
+        both)       cmd_cache_clear "$domain" ;;
+        toggle-on)  cmd_cache_on "$domain" ;;
+        toggle-off) cmd_cache_off "$domain" ;;
     esac
 }
 

@@ -66,6 +66,8 @@ show_usage() {
     echo ""
     echo "  Cache:"
     echo "    cache                     Cache management menu"
+    echo "    cache on <domain>         Enable FastCGI cache for a site"
+    echo "    cache off <domain>        Disable FastCGI cache for a site"
     echo "    cache clear [domain]      Clear all caches (nginx + PHP OPcache)"
     echo "    cache clear-nginx         Clear nginx FastCGI cache only"
     echo "    cache clear-php [domain]  Clear PHP OPcache only"

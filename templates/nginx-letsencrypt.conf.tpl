@@ -97,13 +97,27 @@ server {
         set $skip_cache 1;
     }
 
-    # WordPress-specific URLs that should never be cached
-    if ($request_uri ~* "/wp-admin/|/wp-json/|/xmlrpc.php|wp-.*.php|/feed/|index.php|sitemap(_index)?.xml") {
+    # WordPress-specific URLs that should never be cached.
+    # NOTE: sitemap(_index)?.xml is intentionally NOT skipped — sitemaps
+    # are static-ish and hammered by crawlers, let them cache. `index.php`
+    # was also removed: WP pretty-permalinks don't include it in the URI,
+    # and when they do (rare), the /wp-admin/ and wp-*.php patterns below
+    # already catch the dynamic cases.
+    if ($request_uri ~* "/wp-admin/|/wp-json/|/xmlrpc.php|wp-.*\.php|/feed/") {
         set $skip_cache 1;
     }
 
+    # WordPress preview / autosave — always fresh
+    if ($arg_preview = "true") { set $skip_cache 1; }
+    if ($arg_p != "")          { set $skip_cache 1; }
+
     # WooCommerce dynamic pages
     if ($request_uri ~* "/cart/|/checkout/|/my-account/|/addons|/add-to-cart") {
+        set $skip_cache 1;
+    }
+
+    # WooCommerce AJAX (cart fragments etc.) — must never be cached
+    if ($arg_wc_ajax != "") {
         set $skip_cache 1;
     }
 
@@ -121,11 +135,12 @@ server {
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
 
-        # FastCGI Cache (WordPress-aware)
+        # CACHE: BEGIN (do not edit — dockweb strips this block when cache is off)
         fastcgi_cache PHPCACHE;
         fastcgi_cache_bypass $skip_cache $http_pragma $http_authorization;
         fastcgi_no_cache $skip_cache $http_pragma $http_authorization;
         add_header X-FastCGI-Cache $upstream_cache_status;
+        # CACHE: END
 
         # Performance tuning
         fastcgi_buffer_size 128k;

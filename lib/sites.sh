@@ -11,14 +11,22 @@ cmd_site_list() {
         return 0
     fi
 
-    printf "\n  ${BOLD}%-30s %-12s %-25s %-20s${NC}\n" "DOMAIN" "SSL" "PHP CONTAINER" "DATABASE"
-    printf "  ${DIM}%-30s %-12s %-25s %-20s${NC}\n" "──────────────────────────────" "────────────" "─────────────────────────" "────────────────────"
+    printf "\n  ${BOLD}%-30s %-12s %-25s %-18s %-6s${NC}\n" \
+        "DOMAIN" "SSL" "PHP CONTAINER" "DATABASE" "CACHE"
+    printf "  ${DIM}%-30s %-12s %-25s %-18s %-6s${NC}\n" \
+        "──────────────────────────────" "────────────" \
+        "─────────────────────────" "──────────────────" "──────"
 
     while IFS= read -r domain; do
         [[ -z "$domain" ]] && continue
-        local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
+        local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" \
+              DOMAIN="" CACHE_ENABLED=""
         if get_site_conf "$domain"; then
-            printf "  %-30s %-12s %-25s %-20s\n" "$DOMAIN" "$SSL_MODE" "$PHP_CONTAINER" "$DB_NAME"
+            local cache_display="${CACHE_ENABLED:-true}"
+            [[ "$cache_display" == "true" ]]  && cache_display="on"
+            [[ "$cache_display" == "false" ]] && cache_display="off"
+            printf "  %-30s %-12s %-25s %-18s %-6s\n" \
+                "$DOMAIN" "$SSL_MODE" "$PHP_CONTAINER" "$DB_NAME" "$cache_display"
         fi
     done <<< "$sites"
     echo ""
@@ -75,6 +83,18 @@ cmd_site_add() {
         share_note="(shared with: $members — they will briefly restart)"
     fi
 
+    # Step 4b: Cache opt-in (FastCGI cache is only applied for cloudflare /
+    # letsencrypt modes; dev/local templates don't include it regardless).
+    local cache_enabled="true"
+    if [[ "$ssl_mode" == "cloudflare" || "$ssl_mode" == "letsencrypt" ]]; then
+        echo ""
+        if confirm "  Enable FastCGI cache for this site?" "y"; then
+            cache_enabled="true"
+        else
+            cache_enabled="false"
+        fi
+    fi
+
     # Step 5: Confirm
     echo ""
     echo -e "  ${BOLD}Summary:${NC}"
@@ -85,6 +105,9 @@ cmd_site_add() {
         echo "  Local Domain:   $(get_local_domain "$domain")  ← add to /etc/hosts"
     fi
     echo "  PHP Container:  $php_container ${share_note}"
+    if [[ "$ssl_mode" == "cloudflare" || "$ssl_mode" == "letsencrypt" ]]; then
+        echo "  FastCGI Cache:  $cache_enabled"
+    fi
     echo "  Database:       $db_name"
     echo "  DB User:        $db_user"
     echo "  DB Password:    $db_pass"
@@ -122,12 +145,13 @@ DB_NAME=$db_name
 DB_USER=$db_user
 DB_PASS=$db_pass
 PHP_CONTAINER=$php_container
+CACHE_ENABLED=$cache_enabled
 CONFEOF
     chmod 600 "${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf"
 
     # Step 7: Generate nginx config
     log_info "Generating nginx config..."
-    generate_nginx_conf "$domain" "$ssl_mode" "$php_container"
+    generate_nginx_conf "$domain" "$ssl_mode" "$php_container" "$cache_enabled"
 
     # Step 8: Create database
     create_database "$db_name" "$db_user" "$db_pass"
@@ -453,6 +477,10 @@ generate_nginx_conf() {
     local domain="$1"
     local ssl_mode="$2"
     local php_container="$3"
+    # 4th arg is optional — enables/disables FastCGI cache for this site.
+    # Default is "true" for backwards-compat with older sites that predate
+    # the CACHE_ENABLED field in .dockweb.conf.
+    local cache_enabled="${4:-true}"
     local template output
 
     case "$ssl_mode" in
@@ -475,7 +503,35 @@ generate_nginx_conf() {
         -e "s|{{PHP_CONTAINER}}|${php_container}|g" \
         "$template" > "$output"
 
+    # Strip the FastCGI cache block if the site opted out. The dev/local
+    # templates don't have these markers, so this is a no-op for them.
+    if [[ "$cache_enabled" != "true" ]]; then
+        sed -i '/# CACHE: BEGIN/,/# CACHE: END/d' "$output"
+    fi
+
     log_success "Nginx config: nginx/conf.d/${domain}.conf"
+}
+
+# Regenerate every site's nginx conf from its current template. Called from
+# `dockweb start` so template updates picked up via `git pull` apply to
+# existing sites without needing to re-run `site add`.
+regenerate_all_nginx_confs() {
+    local sites
+    sites=$(list_all_sites)
+    [[ -z "$sites" ]] && return 0
+    log_info "Regenerating nginx site configs from templates..."
+    local count=0
+    while IFS= read -r site; do
+        [[ -z "$site" ]] && continue
+        local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" \
+              DOMAIN="" CACHE_ENABLED=""
+        if get_site_conf "$site"; then
+            generate_nginx_conf "$DOMAIN" "$SSL_MODE" "$PHP_CONTAINER" \
+                "${CACHE_ENABLED:-true}" >/dev/null
+            count=$((count + 1))
+        fi
+    done <<< "$sites"
+    log_success "Regenerated ${count} site config(s)."
 }
 
 create_database() {

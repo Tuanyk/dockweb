@@ -553,8 +553,8 @@ cmd_ssl_switch() {
     # Update config
     sed -i "s/^SSL_MODE=.*/SSL_MODE=${new_mode}/" "${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf"
 
-    # Regenerate nginx config
-    generate_nginx_conf "$domain" "$new_mode" "$PHP_CONTAINER"
+    # Regenerate nginx config — preserve the site's FastCGI cache preference.
+    generate_nginx_conf "$domain" "$new_mode" "$PHP_CONTAINER" "${CACHE_ENABLED:-true}"
 
     # Reload nginx if running
     if docker exec gateway_nginx nginx -t 2>/dev/null; then
