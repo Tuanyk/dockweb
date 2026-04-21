@@ -97,6 +97,12 @@ server {
         set $skip_cache 1;
     }
 
+    # Custom PHP app session cookie — any logged-in user on a non-WP site
+    # (e.g. kairoxbuild) must never be served someone else's cached page.
+    if ($http_cookie ~* "PHPSESSID") {
+        set $skip_cache 1;
+    }
+
     # WordPress-specific URLs that should never be cached.
     # NOTE: sitemap(_index)?.xml is intentionally NOT skipped — sitemaps
     # are static-ish and hammered by crawlers, let them cache. `index.php`
@@ -104,6 +110,14 @@ server {
     # and when they do (rare), the /wp-admin/ and wp-*.php patterns below
     # already catch the dynamic cases.
     if ($request_uri ~* "/wp-admin/|/wp-json/|/xmlrpc.php|wp-.*\.php|/feed/") {
+        set $skip_cache 1;
+    }
+
+    # Custom PHP app admin + per-user pages (non-WP sites).
+    # Matches admin.php, admin-coins.php, admin-config.php, /admin/... as well
+    # as /account, /credits, /user/, /auth.php — anything that renders
+    # user-specific content must bypass cache.
+    if ($request_uri ~* "/admin|/account|/credits|/user/|/auth\.php|/logout") {
         set $skip_cache 1;
     }
 
