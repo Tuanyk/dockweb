@@ -156,6 +156,10 @@ CONFEOF
     # Step 8: Create database
     create_database "$db_name" "$db_user" "$db_pass"
 
+    # Step 8b: If WordPress already exists, offer to wire the DB settings into
+    # wp-config.php so the site can come up without a manual edit.
+    maybe_patch_wp_config "$domain" "$db_name" "$db_user" "$db_pass" "shared_mysql"
+
     # Step 9: Regenerate compose
     log_info "Regenerating docker-compose.sites.yml..."
     generate_sites_compose
@@ -276,6 +280,133 @@ _pick_php_container() {
 _container_is_shared_target() {
     local container="$1"
     list_php_containers | grep -qx "$container"
+}
+
+find_wp_config() {
+    local domain="$1"
+    local site_root="${DOCKWEB_ROOT}/sites/${domain}"
+    local candidate
+
+    for candidate in \
+        "${site_root}/wp-config.php" \
+        "${site_root}/public/wp-config.php"; do
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+_escape_sed_replacement() {
+    printf '%s' "$1" | sed 's/[\\&|]/\\&/g'
+}
+
+_wp_define_line() {
+    local key="$1"
+    local value="$2"
+    printf "define( '%s', '%s' );" "$key" "$value"
+}
+
+wp_config_has_standard_db_constants() {
+    local path="$1"
+    local key
+
+    for key in DB_NAME DB_USER DB_PASSWORD DB_HOST; do
+        if ! grep -Eq "^[[:space:]]*define[[:space:]]*\\([[:space:]]*['\"]${key}['\"]" "$path"; then
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+verify_wp_config_db_settings() {
+    local path="$1"
+    local db_name="$2"
+    local db_user="$3"
+    local db_pass="$4"
+    local db_host="$5"
+
+    grep -Fq "$(_wp_define_line DB_NAME "$db_name")" "$path" \
+        && grep -Fq "$(_wp_define_line DB_USER "$db_user")" "$path" \
+        && grep -Fq "$(_wp_define_line DB_PASSWORD "$db_pass")" "$path" \
+        && grep -Fq "$(_wp_define_line DB_HOST "$db_host")" "$path"
+}
+
+patch_wp_config_db_settings() {
+    local path="$1"
+    local db_name="$2"
+    local db_user="$3"
+    local db_pass="$4"
+    local db_host="$5"
+    local rel_path="${path#${DOCKWEB_ROOT}/}"
+    local backup="${path}.dockweb.bak.$(date +%Y%m%d%H%M%S)"
+    local db_name_esc db_user_esc db_pass_esc db_host_esc
+
+    if [[ ! -w "$path" ]]; then
+        log_warn "wp-config.php is not writable: ${rel_path}"
+        return 1
+    fi
+
+    if ! wp_config_has_standard_db_constants "$path"; then
+        log_warn "Detected ${rel_path}, but its DB settings are not in the standard define() format."
+        log_info "Skipped wp-config.php patch."
+        return 1
+    fi
+
+    if ! cp "$path" "$backup"; then
+        log_warn "Could not create backup before patching: ${backup#${DOCKWEB_ROOT}/}"
+        return 1
+    fi
+
+    db_name_esc=$(_escape_sed_replacement "$db_name")
+    db_user_esc=$(_escape_sed_replacement "$db_user")
+    db_pass_esc=$(_escape_sed_replacement "$db_pass")
+    db_host_esc=$(_escape_sed_replacement "$db_host")
+
+    if ! sed -Ei \
+        -e "s|^([[:space:]]*)define[[:space:]]*\\([[:space:]]*['\"]DB_NAME['\"][[:space:]]*,[[:space:]]*.*\\);.*$|\\1define( 'DB_NAME', '${db_name_esc}' );|" \
+        -e "s|^([[:space:]]*)define[[:space:]]*\\([[:space:]]*['\"]DB_USER['\"][[:space:]]*,[[:space:]]*.*\\);.*$|\\1define( 'DB_USER', '${db_user_esc}' );|" \
+        -e "s|^([[:space:]]*)define[[:space:]]*\\([[:space:]]*['\"]DB_PASSWORD['\"][[:space:]]*,[[:space:]]*.*\\);.*$|\\1define( 'DB_PASSWORD', '${db_pass_esc}' );|" \
+        -e "s|^([[:space:]]*)define[[:space:]]*\\([[:space:]]*['\"]DB_HOST['\"][[:space:]]*,[[:space:]]*.*\\);.*$|\\1define( 'DB_HOST', '${db_host_esc}' );|" \
+        "$path"; then
+        cp "$backup" "$path" 2>/dev/null || true
+        log_warn "Failed to patch ${rel_path}; restored the backup."
+        return 1
+    fi
+
+    if ! verify_wp_config_db_settings "$path" "$db_name" "$db_user" "$db_pass" "$db_host"; then
+        cp "$backup" "$path" 2>/dev/null || true
+        log_warn "Patch verification failed for ${rel_path}; restored the backup."
+        return 1
+    fi
+
+    log_success "Patched WordPress config: ${rel_path}"
+    log_info "Backup saved to: ${backup#${DOCKWEB_ROOT}/}"
+}
+
+maybe_patch_wp_config() {
+    local domain="$1"
+    local db_name="$2"
+    local db_user="$3"
+    local db_pass="$4"
+    local db_host="$5"
+    local wp_config
+
+    if ! wp_config=$(find_wp_config "$domain"); then
+        return 0
+    fi
+
+    echo ""
+    log_info "Detected WordPress config: ${wp_config#${DOCKWEB_ROOT}/}"
+
+    if confirm "  Patch WordPress DB settings in this file now?" "y"; then
+        patch_wp_config_db_settings "$wp_config" "$db_name" "$db_user" "$db_pass" "$db_host"
+    else
+        log_info "Skipped wp-config.php patch."
+    fi
 }
 
 cmd_site_remove() {

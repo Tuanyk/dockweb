@@ -13,6 +13,7 @@
 I'm a freelancer. Every time a client needed a PHP site hosted, I'd spin up a VPS and do the same thing over and over: write a `docker-compose.yml`, configure Nginx, create a MySQL database, figure out SSL, set up backups and fail2ban... then do it all again for the next client. After the fifth or sixth time, I automated it. That's dockweb.
 
 **One command to add a site.** It creates the PHP container, Nginx config, database, user, and SSL — all wired up. Need a second site? Run the same command. Resources auto-scale based on your server's RAM.
+If a `wp-config.php` already exists in `sites/<domain>/` or `sites/<domain>/public/`, `dockweb site add` can also patch the WordPress DB settings interactively.
 
 | | **dockweb** | **Manual Docker Compose** | **Coolify / CapRover / Dokku** |
 |---|---|---|---|
