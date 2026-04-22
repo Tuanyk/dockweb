@@ -97,11 +97,9 @@ server {
         set $skip_cache 1;
     }
 
-    # Custom PHP app session cookie — any logged-in user on a non-WP site
-    # (e.g. kairoxbuild) must never be served someone else's cached page.
-    if ($http_cookie ~* "PHPSESSID") {
-        set $skip_cache 1;
-    }
+    # Custom PHP apps can label session traffic with DOCKWEB_CACHE_STATE.
+    # nginx.conf handles the actual auth/unknown-session bypass logic so
+    # anonymous session cookies do not kill cache warmup or hit rate.
 
     # WordPress-specific URLs that should never be cached.
     # NOTE: sitemap(_index)?.xml is intentionally NOT skipped — sitemaps
@@ -151,8 +149,8 @@ server {
 
         # CACHE: BEGIN (do not edit — dockweb strips this block when cache is off)
         fastcgi_cache PHPCACHE;
-        fastcgi_cache_bypass $skip_cache $http_pragma $http_authorization;
-        fastcgi_no_cache $skip_cache $http_pragma $http_authorization;
+        fastcgi_cache_bypass $skip_cache $skip_cache_session $http_pragma $http_authorization;
+        fastcgi_no_cache $skip_cache $skip_cache_session $http_pragma $http_authorization;
         add_header X-FastCGI-Cache $upstream_cache_status;
         # CACHE: END
 
