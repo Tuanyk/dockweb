@@ -604,6 +604,31 @@ SERVICE
 SERVICE
 }
 
+ssl_mode_cert_ready() {
+    local domain="$1"
+    local ssl_mode="$2"
+
+    case "$ssl_mode" in
+        cloudflare)
+            [[ -f "${DOCKWEB_ROOT}/cloudflare-certs/${domain}/origin.pem" \
+               && -f "${DOCKWEB_ROOT}/cloudflare-certs/${domain}/origin.key" ]]
+            ;;
+        letsencrypt)
+            [[ -f "${DOCKWEB_ROOT}/certbot/conf/live/${domain}/fullchain.pem" \
+               && -f "${DOCKWEB_ROOT}/certbot/conf/live/${domain}/privkey.pem" \
+               && -f "${DOCKWEB_ROOT}/certbot/conf/options-ssl-nginx.conf" \
+               && -f "${DOCKWEB_ROOT}/certbot/conf/ssl-dhparams.pem" ]]
+            ;;
+        dev-ssl)
+            [[ -f "${DOCKWEB_ROOT}/local-certs/${domain}/cert.pem" \
+               && -f "${DOCKWEB_ROOT}/local-certs/${domain}/key.pem" ]]
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
 generate_nginx_conf() {
     local domain="$1"
     local ssl_mode="$2"
@@ -615,8 +640,24 @@ generate_nginx_conf() {
     local template output
 
     case "$ssl_mode" in
-        cloudflare)  template="${DOCKWEB_ROOT}/templates/nginx-cloudflare.conf.tpl" ;;
-        letsencrypt) template="${DOCKWEB_ROOT}/templates/nginx-letsencrypt.conf.tpl" ;;
+        cloudflare)
+            if ssl_mode_cert_ready "$domain" "$ssl_mode"; then
+                template="${DOCKWEB_ROOT}/templates/nginx-cloudflare.conf.tpl"
+            else
+                template="${DOCKWEB_ROOT}/templates/nginx-pending-ssl.conf.tpl"
+                log_warn "SSL cert missing for ${domain} (cloudflare). Generated temporary HTTP-only config."
+                log_info "Run 'dockweb ssl install-cf ${domain}' to enable HTTPS."
+            fi
+            ;;
+        letsencrypt)
+            if ssl_mode_cert_ready "$domain" "$ssl_mode"; then
+                template="${DOCKWEB_ROOT}/templates/nginx-letsencrypt.conf.tpl"
+            else
+                template="${DOCKWEB_ROOT}/templates/nginx-pending-ssl.conf.tpl"
+                log_warn "SSL cert missing for ${domain} (letsencrypt). Generated temporary HTTP-only config."
+                log_info "Run 'dockweb ssl install-le ${domain}' to enable HTTPS."
+            fi
+            ;;
         local)       template="${DOCKWEB_ROOT}/templates/nginx-local.conf.tpl" ;;
         dev)         template="${DOCKWEB_ROOT}/templates/nginx-dev.conf.tpl" ;;
         dev-ssl)     template="${DOCKWEB_ROOT}/templates/nginx-dev-ssl.conf.tpl" ;;

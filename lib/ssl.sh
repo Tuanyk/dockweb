@@ -1,6 +1,29 @@
 #!/bin/bash
 # dockweb - SSL management
 
+_reload_or_start_nginx() {
+    local cmd
+    cmd="$(docker_compose_cmd)"
+
+    if docker exec gateway_nginx nginx -t 2>/dev/null; then
+        docker exec gateway_nginx nginx -s reload 2>/dev/null || true
+        log_success "Nginx reloaded."
+        return 0
+    fi
+
+    log_info "Starting nginx..."
+    $cmd up -d nginx >/dev/null 2>&1 || true
+
+    if docker exec gateway_nginx nginx -t 2>/dev/null; then
+        docker exec gateway_nginx nginx -s reload 2>/dev/null || true
+        log_success "Nginx started and reloaded."
+        return 0
+    fi
+
+    log_warn "Nginx config test failed. Check certificate files and logs."
+    return 1
+}
+
 cmd_ssl_menu() {
     local domain="${1:-}"
     local new_mode="${2:-}"
@@ -25,12 +48,8 @@ cmd_ssl_menu() {
             local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" DOMAIN=""
             get_site_conf "$d"
             local cert_status="missing"
-            if [[ "$SSL_MODE" == "cloudflare" ]]; then
-                [[ -f "${DOCKWEB_ROOT}/cloudflare-certs/${d}/origin.pem" ]] && cert_status="installed"
-            elif [[ "$SSL_MODE" == "letsencrypt" ]]; then
-                [[ -f "${DOCKWEB_ROOT}/certbot/conf/live/${d}/fullchain.pem" ]] && cert_status="installed"
-            elif [[ "$SSL_MODE" == "dev-ssl" ]]; then
-                [[ -f "${DOCKWEB_ROOT}/local-certs/${d}/cert.pem" ]] && cert_status="installed" || cert_status="missing"
+            if [[ "$SSL_MODE" == "cloudflare" || "$SSL_MODE" == "letsencrypt" || "$SSL_MODE" == "dev-ssl" ]]; then
+                ssl_mode_cert_ready "$d" "$SSL_MODE" && cert_status="installed"
             elif [[ "$SSL_MODE" == "local" || "$SSL_MODE" == "dev" ]]; then
                 cert_status="n/a (http)"
             fi
@@ -111,12 +130,8 @@ cmd_ssl_menu() {
         echo "  Domain:   $domain"
         echo "  SSL Mode: $SSL_MODE"
         local cert_status="missing"
-        if [[ "$SSL_MODE" == "cloudflare" ]]; then
-            [[ -f "${DOCKWEB_ROOT}/cloudflare-certs/${domain}/origin.pem" ]] && cert_status="installed"
-        elif [[ "$SSL_MODE" == "letsencrypt" ]]; then
-            [[ -f "${DOCKWEB_ROOT}/certbot/conf/live/${domain}/fullchain.pem" ]] && cert_status="installed"
-        elif [[ "$SSL_MODE" == "dev-ssl" ]]; then
-            [[ -f "${DOCKWEB_ROOT}/local-certs/${domain}/cert.pem" ]] && cert_status="installed" || cert_status="missing"
+        if [[ "$SSL_MODE" == "cloudflare" || "$SSL_MODE" == "letsencrypt" || "$SSL_MODE" == "dev-ssl" ]]; then
+            ssl_mode_cert_ready "$domain" "$SSL_MODE" && cert_status="installed"
         elif [[ "$SSL_MODE" == "local" || "$SSL_MODE" == "dev" ]]; then
             cert_status="n/a (http)"
         fi
@@ -375,10 +390,15 @@ cmd_ssl_install_cf() {
             ;;
     esac
 
-    # Reload nginx if running
-    if docker exec gateway_nginx nginx -t 2>/dev/null; then
-        docker exec gateway_nginx nginx -s reload 2>/dev/null
-        log_success "Nginx reloaded."
+    local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" \
+          DOMAIN="" CACHE_ENABLED=""
+    if get_site_conf "$domain" && [[ "$SSL_MODE" == "cloudflare" ]]; then
+        generate_nginx_conf "$DOMAIN" "$SSL_MODE" "$PHP_CONTAINER" "${CACHE_ENABLED:-true}"
+    fi
+
+    if docker ps --format '{{.Names}}' | grep -q '^gateway_nginx$' || \
+       docker ps -a --format '{{.Names}}' | grep -q '^gateway_nginx$'; then
+        _reload_or_start_nginx
     fi
 }
 
@@ -418,24 +438,16 @@ cmd_ssl_install_le() {
             > "${DOCKWEB_ROOT}/certbot/conf/ssl-dhparams.pem"
     fi
 
-    # Create dummy cert for nginx to start
-    log_info "Creating temporary certificate..."
-    local le_path="/etc/letsencrypt/live/${domain}"
-    mkdir -p "${DOCKWEB_ROOT}/certbot/conf/live/${domain}"
-    $cmd run --rm --entrypoint "openssl req -x509 -nodes -newkey rsa:4096 -days 1 \
-        -keyout '${le_path}/privkey.pem' \
-        -out '${le_path}/fullchain.pem' \
-        -subj '/CN=localhost'" certbot
+    local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" \
+          DOMAIN="" CACHE_ENABLED=""
+    if get_site_conf "$domain" && [[ "$SSL_MODE" == "letsencrypt" ]]; then
+        generate_nginx_conf "$DOMAIN" "$SSL_MODE" "$PHP_CONTAINER" "${CACHE_ENABLED:-true}"
+    fi
 
-    # Ensure nginx is running
+    # Ensure nginx is running with the temporary HTTP-only config so the
+    # ACME challenge can be served before the real certificate exists.
     log_info "Starting nginx..."
     $cmd up -d nginx
-
-    # Remove dummy cert
-    log_info "Removing temporary certificate..."
-    $cmd run --rm --entrypoint "rm -rf /etc/letsencrypt/live/${domain} && \
-        rm -rf /etc/letsencrypt/archive/${domain} && \
-        rm -rf /etc/letsencrypt/renewal/${domain}.conf" certbot
 
     # Request real certificate
     log_info "Requesting certificate from Let's Encrypt..."
@@ -453,9 +465,12 @@ cmd_ssl_install_le() {
         --agree-tos \
         --force-renewal" certbot
 
-    # Reload nginx
+    if get_site_conf "$domain" && [[ "$SSL_MODE" == "letsencrypt" ]]; then
+        generate_nginx_conf "$DOMAIN" "$SSL_MODE" "$PHP_CONTAINER" "${CACHE_ENABLED:-true}"
+    fi
+
     log_info "Reloading nginx..."
-    docker exec gateway_nginx nginx -s reload 2>/dev/null
+    _reload_or_start_nginx
 
     log_success "Let's Encrypt certificate installed for $domain!"
     log_info "Auto-renewal handled by certbot container (every 12h)."
@@ -511,10 +526,15 @@ cmd_ssl_install_local() {
     log_info "Cert: ${cert_dir}/cert.pem"
     log_info "Key:  ${cert_dir}/key.pem"
 
-    # Reload nginx if running
-    if docker exec gateway_nginx nginx -t 2>/dev/null; then
-        docker exec gateway_nginx nginx -s reload 2>/dev/null
-        log_success "Nginx reloaded."
+    local SSL_MODE="" PHP_CONTAINER="" DB_NAME="" DB_USER="" DB_PASS="" \
+          DOMAIN="" CACHE_ENABLED=""
+    if get_site_conf "$domain" && [[ "$SSL_MODE" == "dev-ssl" ]]; then
+        generate_nginx_conf "$DOMAIN" "$SSL_MODE" "$PHP_CONTAINER" "${CACHE_ENABLED:-true}"
+    fi
+
+    if docker ps --format '{{.Names}}' | grep -q '^gateway_nginx$' || \
+       docker ps -a --format '{{.Names}}' | grep -q '^gateway_nginx$'; then
+        _reload_or_start_nginx
     fi
 }
 
@@ -556,14 +576,26 @@ cmd_ssl_switch() {
     # Regenerate nginx config — preserve the site's FastCGI cache preference.
     generate_nginx_conf "$domain" "$new_mode" "$PHP_CONTAINER" "${CACHE_ENABLED:-true}"
 
+    if [[ "$new_mode" == "cloudflare" || "$new_mode" == "letsencrypt" ]] && \
+       ! ssl_mode_cert_ready "$domain" "$new_mode"; then
+        log_warn "Certificate not installed yet. Using temporary HTTP-only config for ${domain}."
+        if [[ "$new_mode" == "cloudflare" ]]; then
+            log_info "Run 'dockweb ssl install-cf ${domain}' to enable HTTPS."
+        else
+            log_info "Run 'dockweb ssl install-le ${domain}' to enable HTTPS."
+        fi
+    fi
+
     # Reload nginx if running
     if docker exec gateway_nginx nginx -t 2>/dev/null; then
         docker exec gateway_nginx nginx -s reload 2>/dev/null
         log_success "Nginx reloaded with $new_mode config."
     else
-        log_warn "Nginx config test failed. Check certificate files exist."
-        log_info "For cloudflare: run 'dockweb ssl install-cf $domain'"
-        log_info "For letsencrypt: run 'dockweb ssl install-le $domain'"
+        _reload_or_start_nginx || {
+            log_warn "Nginx config test failed. Check certificate files exist."
+            log_info "For cloudflare: run 'dockweb ssl install-cf $domain'"
+            log_info "For letsencrypt: run 'dockweb ssl install-le $domain'"
+        }
     fi
 
     log_success "SSL mode changed to '$new_mode' for $domain."
