@@ -195,34 +195,100 @@ _extract_json_bool() {
     grep -o "\"${key}\"[[:space:]]*:[[:space:]]*[a-z]*" | head -1 | sed "s/\"${key}\"[[:space:]]*:[[:space:]]*//"
 }
 
+# Echo configured Cloudflare account names, one per line. Falls back to a
+# synthetic "default" account backed by the unsuffixed CLOUDFLARE_* vars
+# when CLOUDFLARE_ACCOUNTS is empty.
+_cf_account_list() {
+    local raw="${CLOUDFLARE_ACCOUNTS:-}"
+    if [[ -n "$raw" ]]; then
+        echo "$raw" | tr ',\n' '  ' | xargs -n1 | awk 'NF'
+        return 0
+    fi
+    if [[ -n "${CLOUDFLARE_API_TOKEN:-}" || -n "${CLOUDFLARE_ORIGIN_CA_KEY:-}" ]]; then
+        echo "default"
+    fi
+}
+
+# $1 = account name, $2 = API_TOKEN | ORIGIN_CA_KEY
+# Returns the per-account env var, with legacy fallback for "default".
+_cf_account_var() {
+    local account="$1" what="$2"
+    local suffixed="CLOUDFLARE_${what}_${account}"
+    local v="${!suffixed:-}"
+    if [[ -z "$v" && "$account" == "default" ]]; then
+        local legacy="CLOUDFLARE_${what}"
+        v="${!legacy:-}"
+    fi
+    echo "$v"
+}
+
+# Walk configured accounts and echo "<account> <zone_id> <zone_name>" for
+# the first one whose zones cover $domain.
+_resolve_cf_account() {
+    local domain="$1"
+    local account token resolved
+    while IFS= read -r account; do
+        [[ -z "$account" ]] && continue
+        token=$(_cf_account_var "$account" "API_TOKEN")
+        if [[ -z "$token" ]]; then
+            log_warn "Cloudflare account '${account}' has no API token (CLOUDFLARE_API_TOKEN_${account}); skipping."
+            continue
+        fi
+        if resolved=$(_resolve_cf_zone "$domain" "$token"); then
+            echo "${account} ${resolved}"
+            return 0
+        fi
+    done < <(_cf_account_list)
+    return 1
+}
+
+# Persist the matched Cloudflare account name into a site's .dockweb.conf
+# so later operations know which credentials produced the cert.
+_persist_cf_account() {
+    local domain="$1" account="$2"
+    local conf="${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf"
+    [[ -f "$conf" ]] || return 0
+    if grep -q '^CLOUDFLARE_ACCOUNT=' "$conf"; then
+        sed -i "s|^CLOUDFLARE_ACCOUNT=.*|CLOUDFLARE_ACCOUNT=${account}|" "$conf"
+    else
+        echo "CLOUDFLARE_ACCOUNT=${account}" >> "$conf"
+    fi
+}
+
 cloudflare_api_install_cert() {
     local domain="$1"
     local cert_dir="$2"
 
     load_env
 
-    # Origin CA Key is required for the certificates API (different from regular API token)
-    local origin_ca_key="${CLOUDFLARE_ORIGIN_CA_KEY:-${CLOUDFLARE_API_TOKEN:-}}"
-    if [[ -z "$origin_ca_key" ]]; then
-        log_error "CLOUDFLARE_ORIGIN_CA_KEY not set in .env"
-        log_info "Get it from: https://dash.cloudflare.com/profile/api-tokens > Origin CA Key"
-        log_info "(This is different from a regular API token)"
+    if [[ -z "$(_cf_account_list)" ]]; then
+        log_error "No Cloudflare accounts configured in .env."
+        log_info "Set CLOUDFLARE_ACCOUNTS (e.g. 'personal,work') plus CLOUDFLARE_API_TOKEN_<name>"
+        log_info "and CLOUDFLARE_ORIGIN_CA_KEY_<name> for each. See .env.example."
         return 1
     fi
 
-    # Auto-detect zone ID if not set
-    local zone_id="${CLOUDFLARE_ZONE_ID:-}"
-    if [[ -z "$zone_id" ]]; then
-        log_info "Zone ID not set, auto-detecting zone for ${domain}..."
-        local resolved zone_name
-        if ! resolved=$(_resolve_cf_zone "$domain" "${CLOUDFLARE_API_TOKEN}"); then
-            log_error "Could not find a Cloudflare zone covering ${domain}."
-            log_info "Set CLOUDFLARE_ZONE_ID manually in .env"
-            return 1
-        fi
-        zone_id="${resolved%% *}"
-        zone_name="${resolved#* }"
-        log_success "Found zone: ${zone_name} (${zone_id})"
+    log_info "Checking Cloudflare accounts for ${domain}..."
+    local matched account rest zone_id zone_name
+    if ! matched=$(_resolve_cf_account "$domain"); then
+        log_error "No configured Cloudflare account owns a zone covering ${domain}."
+        log_info "Accounts tried: $(_cf_account_list | paste -sd',' -)"
+        return 1
+    fi
+    account="${matched%% *}"
+    rest="${matched#* }"
+    zone_id="${rest%% *}"
+    zone_name="${rest#* }"
+    log_success "Matched account '${account}' (zone ${zone_name} / ${zone_id})"
+
+    # Origin CA Key is required for the certificates API (different from the API token).
+    local origin_ca_key
+    origin_ca_key=$(_cf_account_var "$account" "ORIGIN_CA_KEY")
+    if [[ -z "$origin_ca_key" ]]; then
+        log_error "CLOUDFLARE_ORIGIN_CA_KEY_${account} not set in .env"
+        log_info "Get it from: https://dash.cloudflare.com/profile/api-tokens > Origin CA Key"
+        log_info "(This is different from a regular API token)"
+        return 1
     fi
 
     # Generate private key and CSR locally
@@ -289,9 +355,12 @@ cloudflare_api_install_cert() {
     chmod 600 "${cert_dir}/origin.key"
 
     log_success "Origin certificate generated and installed!"
-    log_info "  Cert: cloudflare-certs/${domain}/origin.pem"
-    log_info "  Key:  cloudflare-certs/${domain}/origin.key"
+    log_info "  Cert:    cloudflare-certs/${domain}/origin.pem"
+    log_info "  Key:     cloudflare-certs/${domain}/origin.key"
+    log_info "  Account: ${account}"
     log_info "  Valid for: 15 years"
+
+    _persist_cf_account "$domain" "$account"
 }
 
 cmd_ssl_install_cf() {
@@ -313,7 +382,7 @@ cmd_ssl_install_cf() {
 
     load_env
     local has_api="false"
-    [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] && has_api="true"
+    [[ -n "$(_cf_account_list)" ]] && has_api="true"
 
     echo ""
     if [[ "$has_api" == "true" ]]; then
@@ -324,7 +393,7 @@ cmd_ssl_install_cf() {
         echo ""
         echo -ne "  Choose [1-3]: "
     else
-        echo -e "  ${DIM}Tip: Set CLOUDFLARE_API_TOKEN in .env to auto-generate certs${NC}"
+        echo -e "  ${DIM}Tip: Set CLOUDFLARE_ACCOUNTS + CLOUDFLARE_API_TOKEN_<name> in .env to auto-generate certs${NC}"
         echo ""
         echo "  Go to Cloudflare Dashboard > SSL/TLS > Origin Server"
         echo "  Click 'Create Certificate' and download both files."
