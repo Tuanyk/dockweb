@@ -58,6 +58,12 @@ show_usage() {
     echo "    ssl install-local <domain>   Install local dev cert (mkcert)"
     echo "    ssl update-cf-ips            Update Cloudflare IP ranges"
     echo ""
+    echo "  Cloudflare:"
+    echo "    cloudflare add               Add a Cloudflare account (interactive wizard)"
+    echo "    cloudflare list              List configured accounts (credentials masked)"
+    echo "    cloudflare remove <name>     Remove an account from .env"
+    echo "    cloudflare verify [<name>]   Verify credentials for one or all accounts"
+    echo ""
     echo "  Backup:"
     echo "    backup now          Run backup immediately"
     echo "    backup list         List backup snapshots"
@@ -202,6 +208,10 @@ main() {
                 update-cf-ips) update_cloudflare_ips ;;
                 *)             cmd_ssl_menu "${2:-}" "${3:-}" ;;
             esac
+            ;;
+        cloudflare|cf)
+            shift
+            cmd_cloudflare "$@"
             ;;
         backup)
             case "${2:-}" in

@@ -63,6 +63,7 @@ cmd_ssl_menu() {
         echo "    c) Install Local Dev Cert (mkcert)"
         echo "    d) Switch SSL mode for a site"
         echo "    e) Update Cloudflare IP ranges"
+        echo "    f) Manage Cloudflare accounts"
         echo "    0) Back"
         echo ""
         echo -ne "  Choose: "
@@ -110,6 +111,7 @@ cmd_ssl_menu() {
                 esac
                 ;;
             e) update_cloudflare_ips ;;
+            f) cmd_cloudflare_menu ;;
             0) return 0 ;;
             *) log_error "Invalid choice." ;;
         esac
@@ -730,4 +732,471 @@ HEADER
         docker exec gateway_nginx nginx -s reload 2>/dev/null
         log_success "Nginx reloaded."
     fi
+}
+
+# ============================================================
+# Cloudflare account management (add/list/remove/verify)
+# ============================================================
+
+# Verify an API token is active and has zone access. The /user/tokens/verify
+# endpoint returns success+status=active for any working token; we additionally
+# probe /zones to make sure the token has at least Zone:Read.
+_cf_verify_token() {
+    local token="$1"
+    local resp success status
+    resp=$(curl -sS --max-time 10 \
+        -H "Authorization: Bearer ${token}" \
+        -H "Content-Type: application/json" \
+        "https://api.cloudflare.com/client/v4/user/tokens/verify" 2>/dev/null) || return 1
+    success=$(echo "$resp" | _extract_json_bool "success")
+    status=$(echo "$resp" | _extract_json_value "status")
+    [[ "$success" == "true" && "$status" == "active" ]] || return 1
+
+    # Confirm Zone:Read by listing zones (per_page=1 keeps the response tiny).
+    resp=$(curl -sS --max-time 10 \
+        -H "Authorization: Bearer ${token}" \
+        -H "Content-Type: application/json" \
+        "https://api.cloudflare.com/client/v4/zones?per_page=1" 2>/dev/null) || return 1
+    success=$(echo "$resp" | _extract_json_bool "success")
+    [[ "$success" == "true" ]]
+}
+
+# Verify an Origin CA Key by listing existing certificates (read-only).
+# Cloudflare returns success:false on bad keys, success:true on valid ones
+# even if the result list is empty.
+_cf_verify_origin_ca_key() {
+    local key="$1"
+    local resp success
+    resp=$(curl -sS --max-time 10 \
+        -H "X-Auth-User-Service-Key: ${key}" \
+        -H "Content-Type: application/json" \
+        "https://api.cloudflare.com/client/v4/certificates" 2>/dev/null) || return 1
+    success=$(echo "$resp" | _extract_json_bool "success")
+    [[ "$success" == "true" ]]
+}
+
+# Read KEY=... from .env, echoing the raw value (no quoting handling).
+_cf_env_get() {
+    local key="$1"
+    local env_file="${DOCKWEB_ROOT}/.env"
+    [[ -f "$env_file" ]] || { echo ""; return 0; }
+    grep "^${key}=" "$env_file" | head -1 | cut -d= -f2-
+}
+
+# Set or replace KEY=value in .env, preserving line position.
+# Appends at end of file when KEY isn't present yet.
+_cf_env_set() {
+    local key="$1"
+    local value="$2"
+    local env_file="${DOCKWEB_ROOT}/.env"
+
+    if [[ ! -f "$env_file" ]]; then
+        log_error ".env file not found at ${env_file}. Run 'cp .env.example .env' first."
+        return 1
+    fi
+
+    if grep -q "^${key}=" "$env_file"; then
+        local tmp
+        tmp=$(mktemp)
+        # ENVIRON avoids awk's -v backslash-escape interpretation, so token
+        # values containing literal backslashes survive intact.
+        K="$key" V="$value" awk '
+            BEGIN { set = 0; k = ENVIRON["K"]; v = ENVIRON["V"] }
+            !set && index($0, k "=") == 1 { print k "=" v; set = 1; next }
+            { print }
+        ' "$env_file" > "$tmp" && mv "$tmp" "$env_file"
+    else
+        echo "${key}=${value}" >> "$env_file"
+    fi
+}
+
+# Delete a KEY=... line entirely. No-op if missing.
+_cf_env_unset() {
+    local key="$1"
+    local env_file="${DOCKWEB_ROOT}/.env"
+    [[ -f "$env_file" ]] || return 0
+    grep -q "^${key}=" "$env_file" || return 0
+    local tmp
+    tmp=$(mktemp)
+    grep -v "^${key}=" "$env_file" > "$tmp" || true
+    mv "$tmp" "$env_file"
+}
+
+# True if NAME is in CLOUDFLARE_ACCOUNTS (whitespace-tolerant).
+_cf_env_accounts_has() {
+    local name="$1"
+    local current
+    current=$(_cf_env_get "CLOUDFLARE_ACCOUNTS")
+    [[ -z "$current" ]] && return 1
+    local -a accounts=()
+    IFS=',' read -ra accounts <<< "$current"
+    local a
+    for a in "${accounts[@]}"; do
+        a="${a// /}"
+        [[ "$a" == "$name" ]] && return 0
+    done
+    return 1
+}
+
+# Append NAME to CLOUDFLARE_ACCOUNTS (idempotent, normalizes whitespace).
+_cf_env_accounts_add() {
+    local name="$1"
+    _cf_env_accounts_has "$name" && return 0
+    local current
+    current=$(_cf_env_get "CLOUDFLARE_ACCOUNTS")
+    local -a kept=()
+    if [[ -n "$current" ]]; then
+        local -a tokens=()
+        IFS=',' read -ra tokens <<< "$current"
+        local t
+        for t in "${tokens[@]}"; do
+            t="${t// /}"
+            [[ -n "$t" ]] && kept+=("$t")
+        done
+    fi
+    kept+=("$name")
+    local joined
+    joined=$(IFS=','; echo "${kept[*]}")
+    _cf_env_set "CLOUDFLARE_ACCOUNTS" "$joined"
+}
+
+# Remove NAME from CLOUDFLARE_ACCOUNTS. Leaves the var set to "" if list empties.
+_cf_env_accounts_remove() {
+    local name="$1"
+    local current
+    current=$(_cf_env_get "CLOUDFLARE_ACCOUNTS")
+    [[ -z "$current" ]] && return 0
+    local -a tokens=() kept=()
+    IFS=',' read -ra tokens <<< "$current"
+    local t
+    for t in "${tokens[@]}"; do
+        t="${t// /}"
+        [[ -z "$t" ]] && continue
+        [[ "$t" == "$name" ]] && continue
+        kept+=("$t")
+    done
+    local joined=""
+    [[ ${#kept[@]} -gt 0 ]] && joined=$(IFS=','; echo "${kept[*]}")
+    _cf_env_set "CLOUDFLARE_ACCOUNTS" "$joined"
+}
+
+# Display a credential safely: show first 6 chars + last 2, mask the rest.
+_cf_mask() {
+    local v="$1"
+    if [[ ${#v} -le 8 ]]; then
+        echo "***"
+    else
+        echo "${v:0:6}…${v: -2}"
+    fi
+}
+
+# Move legacy CLOUDFLARE_API_TOKEN/CLOUDFLARE_ORIGIN_CA_KEY into a named
+# "default" account before we add a second account — otherwise the legacy
+# fallback in _cf_account_list (which only triggers on empty CLOUDFLARE_ACCOUNTS)
+# would silently orphan the existing creds.
+#
+# Returns: 0 = migrated, 1 = nothing to migrate, 2 = legacy creds invalid.
+_cf_migrate_legacy_if_needed() {
+    local acc legacy_token legacy_key
+    acc=$(_cf_env_get "CLOUDFLARE_ACCOUNTS")
+    legacy_token=$(_cf_env_get "CLOUDFLARE_API_TOKEN")
+    legacy_key=$(_cf_env_get "CLOUDFLARE_ORIGIN_CA_KEY")
+
+    if [[ -n "$acc" ]]; then return 1; fi
+    if [[ -z "$legacy_token" && -z "$legacy_key" ]]; then return 1; fi
+
+    log_info "Found legacy single-account Cloudflare config in .env."
+    log_info "Migrating to named account 'default' so it isn't orphaned when you add new accounts."
+
+    if [[ -n "$legacy_token" ]] && ! _cf_verify_token "$legacy_token"; then
+        log_error "Legacy CLOUDFLARE_API_TOKEN failed verification (invalid or expired)."
+        log_info "Either fix or clear CLOUDFLARE_API_TOKEN in .env, then retry."
+        return 2
+    fi
+    if [[ -n "$legacy_key" ]] && ! _cf_verify_origin_ca_key "$legacy_key"; then
+        log_error "Legacy CLOUDFLARE_ORIGIN_CA_KEY failed verification."
+        log_info "Either fix or clear CLOUDFLARE_ORIGIN_CA_KEY in .env, then retry."
+        return 2
+    fi
+
+    [[ -n "$legacy_token" ]] && _cf_env_set "CLOUDFLARE_API_TOKEN_default" "$legacy_token"
+    [[ -n "$legacy_key" ]]   && _cf_env_set "CLOUDFLARE_ORIGIN_CA_KEY_default" "$legacy_key"
+    _cf_env_accounts_add "default"
+    _cf_env_set "CLOUDFLARE_API_TOKEN" ""
+    _cf_env_set "CLOUDFLARE_ORIGIN_CA_KEY" ""
+
+    log_success "Migrated legacy config to account 'default'."
+    return 0
+}
+
+# Interactive submenu (entered from the SSL menu).
+cmd_cloudflare_menu() {
+    while true; do
+        header "Manage Cloudflare accounts"
+        echo "    1) List accounts"
+        echo "    2) Add account"
+        echo "    3) Remove account"
+        echo "    4) Verify accounts"
+        echo "    0) Back"
+        echo ""
+        echo -ne "  Choose: "
+        read -r choice
+        case "$choice" in
+            1) cmd_cloudflare_list ;;
+            2) cmd_cloudflare_add ;;
+            3)
+                echo -ne "  Account name: "
+                read -r rm_name
+                [[ -z "$rm_name" ]] && { log_error "Name required."; continue; }
+                cmd_cloudflare_remove "$rm_name"
+                ;;
+            4) cmd_cloudflare_verify ;;
+            0) return 0 ;;
+            *) log_error "Invalid choice." ;;
+        esac
+        echo ""
+        echo -ne "  ${DIM}Press Enter to continue...${NC}"
+        read -r
+    done
+}
+
+# Top-level dispatcher for `dockweb cloudflare ...`.
+cmd_cloudflare() {
+    local sub="${1:-}"
+    [[ $# -gt 0 ]] && shift
+    case "$sub" in
+        add)         cmd_cloudflare_add "$@" ;;
+        list|ls)     cmd_cloudflare_list ;;
+        remove|rm)   cmd_cloudflare_remove "${1:-}" ;;
+        verify)      cmd_cloudflare_verify "${1:-}" ;;
+        ""|help|--help|-h)
+            echo "  Usage: dockweb cloudflare {add|list|remove|verify} [args]"
+            echo ""
+            echo "    add [--name N --token T --origin-ca-key K]"
+            echo "                          Add a Cloudflare account (interactive if flags omitted)"
+            echo "    list                  List configured accounts (credentials masked)"
+            echo "    remove <name>         Remove an account from .env"
+            echo "    verify [<name>]       Verify credentials for one or all accounts"
+            ;;
+        *)
+            log_error "Unknown subcommand: cloudflare ${sub}"
+            echo "  Run 'dockweb cloudflare' for usage."
+            return 1
+            ;;
+    esac
+}
+
+# Add a new Cloudflare account: prompt for name + token + origin-ca-key,
+# verify each against the Cloudflare API (hard-fail), then persist to .env.
+cmd_cloudflare_add() {
+    local name="" token="" origin_ca_key=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)           name="$2"; shift 2 ;;
+            --token)          token="$2"; shift 2 ;;
+            --origin-ca-key)  origin_ca_key="$2"; shift 2 ;;
+            *) log_error "Unknown flag: $1"; return 1 ;;
+        esac
+    done
+
+    header "Add Cloudflare account"
+
+    if [[ ! -f "${DOCKWEB_ROOT}/.env" ]]; then
+        log_error ".env file not found. Run 'cp .env.example .env' first."
+        return 1
+    fi
+
+    # Migrate legacy single-account form before mutating .env so we don't
+    # orphan its creds when CLOUDFLARE_ACCOUNTS becomes non-empty.
+    local mig=0
+    _cf_migrate_legacy_if_needed || mig=$?
+    if [[ $mig -eq 2 ]]; then return 1; fi
+
+    if [[ -z "$name" ]]; then
+        echo -ne "  Account name (letters/digits/underscore only, e.g. 'personal'): "
+        read -r name
+    fi
+    if ! [[ "$name" =~ ^[A-Za-z0-9_]+$ ]]; then
+        log_error "Invalid account name '${name}'. Use only [A-Za-z0-9_] (no hyphens, dots, or spaces)."
+        return 1
+    fi
+    if _cf_env_accounts_has "$name"; then
+        log_error "Account '${name}' already exists in CLOUDFLARE_ACCOUNTS."
+        log_info "Use 'dockweb cloudflare remove ${name}' first, or pick a different name."
+        return 1
+    fi
+
+    if [[ -z "$token" ]]; then
+        echo -ne "  Cloudflare API token (Zone:Read scope; input hidden): "
+        read -rs token
+        echo ""
+    fi
+    if [[ -z "$token" ]]; then
+        log_error "API token cannot be empty."
+        return 1
+    fi
+    log_info "Verifying API token..."
+    if ! _cf_verify_token "$token"; then
+        log_error "API token verification failed (invalid, expired, or missing Zone:Read)."
+        log_info "Create or fix at: https://dash.cloudflare.com/profile/api-tokens"
+        return 1
+    fi
+    log_success "API token verified."
+
+    if [[ -z "$origin_ca_key" ]]; then
+        echo ""
+        log_info "Origin CA Key is a separate credential (looks like 'v1.0-…')."
+        log_info "Get it at: https://dash.cloudflare.com/profile/api-tokens > Origin CA Key"
+        echo -ne "  Origin CA Key (input hidden): "
+        read -rs origin_ca_key
+        echo ""
+    fi
+    if [[ -z "$origin_ca_key" ]]; then
+        log_error "Origin CA Key cannot be empty."
+        return 1
+    fi
+    log_info "Verifying Origin CA Key..."
+    if ! _cf_verify_origin_ca_key "$origin_ca_key"; then
+        log_error "Origin CA Key verification failed."
+        log_info "Make sure you copied the global Origin CA Key, not a regular API token."
+        return 1
+    fi
+    log_success "Origin CA Key verified."
+
+    _cf_env_set "CLOUDFLARE_API_TOKEN_${name}" "$token"
+    _cf_env_set "CLOUDFLARE_ORIGIN_CA_KEY_${name}" "$origin_ca_key"
+    _cf_env_accounts_add "$name"
+
+    echo ""
+    log_success "Cloudflare account '${name}' added to .env."
+    log_info "  Token:          $(_cf_mask "$token")"
+    log_info "  Origin CA Key:  $(_cf_mask "$origin_ca_key")"
+}
+
+cmd_cloudflare_list() {
+    header "Cloudflare accounts"
+    load_env
+
+    local accounts
+    accounts=$(_cf_account_list)
+    if [[ -z "$accounts" ]]; then
+        echo -e "  ${DIM}(none configured)${NC}"
+        echo ""
+        echo "  Add one with: dockweb cloudflare add"
+        return 0
+    fi
+
+    local a token key
+    while IFS= read -r a; do
+        [[ -z "$a" ]] && continue
+        token=$(_cf_account_var "$a" "API_TOKEN")
+        key=$(_cf_account_var "$a" "ORIGIN_CA_KEY")
+        echo ""
+        echo -e "  ${BOLD}${a}${NC}"
+        if [[ -n "$token" ]]; then
+            echo "    API token:      $(_cf_mask "$token")"
+        else
+            echo -e "    API token:      ${RED}MISSING${NC}"
+        fi
+        if [[ -n "$key" ]]; then
+            echo "    Origin CA Key:  $(_cf_mask "$key")"
+        else
+            echo -e "    Origin CA Key:  ${RED}MISSING${NC}"
+        fi
+    done <<< "$accounts"
+    echo ""
+}
+
+cmd_cloudflare_remove() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        log_error "Usage: dockweb cloudflare remove <name>"
+        return 1
+    fi
+
+    local current
+    current=$(_cf_env_get "CLOUDFLARE_ACCOUNTS")
+
+    # Special case: removing the implicit "default" account when only legacy
+    # single-account vars are set (CLOUDFLARE_ACCOUNTS is still empty).
+    if [[ "$name" == "default" && -z "$current" ]]; then
+        local legacy_token legacy_key
+        legacy_token=$(_cf_env_get "CLOUDFLARE_API_TOKEN")
+        legacy_key=$(_cf_env_get "CLOUDFLARE_ORIGIN_CA_KEY")
+        if [[ -n "$legacy_token" || -n "$legacy_key" ]]; then
+            confirm "Clear the legacy single-account Cloudflare config?" "n" \
+                || { log_info "Aborted."; return 1; }
+            _cf_env_set "CLOUDFLARE_API_TOKEN" ""
+            _cf_env_set "CLOUDFLARE_ORIGIN_CA_KEY" ""
+            log_success "Cleared legacy Cloudflare config."
+            return 0
+        fi
+    fi
+
+    if ! _cf_env_accounts_has "$name"; then
+        log_error "Account '${name}' not found in CLOUDFLARE_ACCOUNTS."
+        return 1
+    fi
+
+    confirm "Remove Cloudflare account '${name}' from .env?" "n" \
+        || { log_info "Aborted."; return 1; }
+
+    _cf_env_accounts_remove "$name"
+    _cf_env_unset "CLOUDFLARE_API_TOKEN_${name}"
+    _cf_env_unset "CLOUDFLARE_ORIGIN_CA_KEY_${name}"
+
+    log_success "Cloudflare account '${name}' removed from .env."
+    log_warn "Already-installed Origin certs keep working (15-year validity)."
+    log_warn "Re-issuing a cert for sites that used this account will need a new account."
+}
+
+cmd_cloudflare_verify() {
+    local name="${1:-}"
+    load_env
+
+    local accounts
+    if [[ -n "$name" ]]; then
+        accounts="$name"
+    else
+        accounts=$(_cf_account_list)
+    fi
+    if [[ -z "$accounts" ]]; then
+        log_error "No Cloudflare accounts configured."
+        log_info "Add one with: dockweb cloudflare add"
+        return 1
+    fi
+
+    header "Verify Cloudflare accounts"
+
+    local a token key fail=0
+    while IFS= read -r a; do
+        [[ -z "$a" ]] && continue
+        echo ""
+        echo -e "  ${BOLD}${a}${NC}"
+        token=$(_cf_account_var "$a" "API_TOKEN")
+        key=$(_cf_account_var "$a" "ORIGIN_CA_KEY")
+
+        if [[ -z "$token" ]]; then
+            echo -e "    API token:      ${RED}MISSING${NC}"
+            fail=1
+        elif _cf_verify_token "$token"; then
+            echo -e "    API token:      ${GREEN}OK${NC}"
+        else
+            echo -e "    API token:      ${RED}INVALID${NC}"
+            fail=1
+        fi
+
+        if [[ -z "$key" ]]; then
+            echo -e "    Origin CA Key:  ${RED}MISSING${NC}"
+            fail=1
+        elif _cf_verify_origin_ca_key "$key"; then
+            echo -e "    Origin CA Key:  ${GREEN}OK${NC}"
+        else
+            echo -e "    Origin CA Key:  ${RED}INVALID${NC}"
+            fail=1
+        fi
+    done <<< "$accounts"
+    echo ""
+    return $fail
 }
