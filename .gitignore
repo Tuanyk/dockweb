@@ -33,3 +33,7 @@ docs/
 .DS_Store
 Thumbs.db
 .codex
+
+
+AGENTS.md
+CLAUDE.md
