@@ -780,7 +780,12 @@ _cf_env_get() {
     local key="$1"
     local env_file="${DOCKWEB_ROOT}/.env"
     [[ -f "$env_file" ]] || { echo ""; return 0; }
-    grep "^${key}=" "$env_file" | head -1 | cut -d= -f2-
+    awk -v key="$key" '
+        index($0, key "=") == 1 {
+            print substr($0, length(key) + 2)
+            exit
+        }
+    ' "$env_file"
 }
 
 # Set or replace KEY=value in .env, preserving line position.
