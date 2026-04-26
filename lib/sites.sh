@@ -164,21 +164,13 @@ CONFEOF
     log_info "Regenerating docker-compose.sites.yml..."
     generate_sites_compose
 
-    # Step 10: SSL setup
-    if [[ "$ssl_mode" == "cloudflare" ]]; then
-        echo ""
-        if confirm "  Install Cloudflare Origin Certificate now?"; then
-            cmd_ssl_install_cf "$domain"
-        else
-            log_info "Run 'dockweb ssl install-cf $domain' later to install the certificate."
-        fi
-    elif [[ "$ssl_mode" == "letsencrypt" ]]; then
-        echo ""
-        log_info "Start services first, then run: dockweb ssl install-le $domain"
-    fi
-
-    # Step 11: Start / recreate the PHP container if the stack is already running
+    # Step 10: Start / recreate the PHP container if the stack is already running.
+    # MUST happen before any nginx reload (Step 11): the new vhost references
+    # this container's hostname as an upstream, so `nginx -t` fails with
+    # "host not found in upstream" until the container is actually up.
+    local stack_was_running=false
     if is_running; then
+        stack_was_running=true
         echo ""
         local cmd
         cmd="$(docker_compose_cmd)"
@@ -195,9 +187,32 @@ CONFEOF
         # sibling sites get a brief (~2s) restart while the new mount is
         # applied — unavoidable if we want the new site to actually work.
         $cmd up -d --no-deps --build --force-recreate "$php_container"
-        docker exec gateway_nginx nginx -s reload 2>/dev/null || true
         log_success "PHP container ready."
-    else
+    fi
+
+    # Step 11: SSL setup (after PHP container is up so nginx -t resolves the upstream)
+    if [[ "$ssl_mode" == "cloudflare" ]]; then
+        echo ""
+        if [[ "$stack_was_running" == true ]]; then
+            if confirm "  Install Cloudflare Origin Certificate now?"; then
+                cmd_ssl_install_cf "$domain"
+            else
+                log_info "Run 'dockweb ssl install-cf $domain' later to install the certificate."
+            fi
+        else
+            log_info "Run 'dockweb start' first, then 'dockweb ssl install-cf $domain' to install the certificate."
+        fi
+    elif [[ "$ssl_mode" == "letsencrypt" ]]; then
+        echo ""
+        log_info "Start services first, then run: dockweb ssl install-le $domain"
+    fi
+
+    # Step 11b: Reload nginx for non-SSL flows (cmd_ssl_install_* reloads internally).
+    if [[ "$stack_was_running" == true && "$ssl_mode" != "cloudflare" ]]; then
+        docker exec gateway_nginx nginx -s reload 2>/dev/null || true
+    fi
+
+    if [[ "$stack_was_running" == false ]]; then
         log_info "Run 'dockweb start' to bring up all services."
     fi
 
