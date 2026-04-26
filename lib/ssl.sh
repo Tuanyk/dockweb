@@ -743,16 +743,11 @@ HEADER
 # probe /zones to make sure the token has at least Zone:Read.
 _cf_verify_token() {
     local token="$1"
-    local resp success status
-    resp=$(curl -sS --max-time 10 \
-        -H "Authorization: Bearer ${token}" \
-        -H "Content-Type: application/json" \
-        "https://api.cloudflare.com/client/v4/user/tokens/verify" 2>/dev/null) || return 1
-    success=$(echo "$resp" | _extract_json_bool "success")
-    status=$(echo "$resp" | _extract_json_value "status")
-    [[ "$success" == "true" && "$status" == "active" ]] || return 1
-
-    # Confirm Zone:Read by listing zones (per_page=1 keeps the response tiny).
+    local resp success
+    # /zones?per_page=1 alone proves the token is valid, active, and has
+    # Zone:Read. We deliberately don't gate on /user/tokens/verify first —
+    # that endpoint only accepts user-profile tokens and rejects valid
+    # account-owned tokens with code 1000 "Invalid API Token".
     resp=$(curl -sS --max-time 10 \
         -H "Authorization: Bearer ${token}" \
         -H "Content-Type: application/json" \
