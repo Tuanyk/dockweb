@@ -27,36 +27,55 @@ fi
 echo ""
 echo "Testing restoration of latest snapshot: $LATEST_SNAPSHOT"
 
-# 3. Create test directory
 mkdir -p "$TEST_DIR"
 
-# 4. Restore database dump only (faster test)
-echo "Restoring database dump..."
-restic restore "$LATEST_SNAPSHOT" --target "$TEST_DIR" --include /tmp/all_databases.sql
+# 3. Try the new per-site dump layout first; fall back to legacy single dump.
+echo "Restoring database dumps..."
+restic restore "$LATEST_SNAPSHOT" --target "$TEST_DIR" --include /tmp/db_dumps 2>/dev/null || true
 
-# 5. Verify restored file
-if [ -f "$TEST_DIR/tmp/all_databases.sql" ]; then
-    SIZE=$(du -h "$TEST_DIR/tmp/all_databases.sql" | cut -f1)
-    echo "✓ Database dump restored successfully (Size: $SIZE)"
+DUMP_COUNT=$(find "$TEST_DIR/tmp/db_dumps" -maxdepth 1 -name '*.sql' 2>/dev/null | wc -l)
 
-    # Check if it's a valid SQL file
-    if head -1 "$TEST_DIR/tmp/all_databases.sql" | grep -q "MySQL dump"; then
-        echo "✓ File appears to be a valid MySQL dump"
-    else
-        echo "✗ WARNING: File may not be a valid MySQL dump"
+if [ "$DUMP_COUNT" -gt 0 ]; then
+    echo "✓ Restored $DUMP_COUNT per-site database dump(s)"
+    BAD=0
+    for f in "$TEST_DIR/tmp/db_dumps"/*.sql; do
+        if head -1 "$f" 2>/dev/null | grep -q "MySQL dump"; then
+            SIZE=$(du -h "$f" | cut -f1)
+            echo "  ✓ $(basename "$f") (Size: $SIZE)"
+        else
+            echo "  ✗ $(basename "$f") may not be a valid MySQL dump"
+            BAD=$((BAD + 1))
+        fi
+    done
+    if [ "$BAD" -gt 0 ]; then
+        rm -rf "$TEST_DIR"
+        exit 1
     fi
 else
-    echo "✗ ERROR: Database dump not found in restored backup!"
-    rm -rf "$TEST_DIR"
-    exit 1
+    # Legacy snapshot fallback
+    echo "No per-site dumps found, trying legacy all_databases.sql..."
+    restic restore "$LATEST_SNAPSHOT" --target "$TEST_DIR" --include /tmp/all_databases.sql
+
+    if [ -f "$TEST_DIR/tmp/all_databases.sql" ]; then
+        SIZE=$(du -h "$TEST_DIR/tmp/all_databases.sql" | cut -f1)
+        echo "✓ Database dump restored successfully (Size: $SIZE)"
+        if head -1 "$TEST_DIR/tmp/all_databases.sql" | grep -q "MySQL dump"; then
+            echo "✓ File appears to be a valid MySQL dump"
+        else
+            echo "✗ WARNING: File may not be a valid MySQL dump"
+        fi
+    else
+        echo "✗ ERROR: Snapshot contains neither db_dumps/ nor all_databases.sql"
+        rm -rf "$TEST_DIR"
+        exit 1
+    fi
 fi
 
-# 6. Clean up
+# 4. Clean up
 rm -rf "$TEST_DIR"
 
 echo ""
 echo "### Restoration Test PASSED ###"
 echo "Your backups can be successfully restored."
 echo ""
-echo "To restore a full backup, use:"
-echo "  restic restore latest --target /restore/path"
+echo "To restore through dockweb, use: dockweb backup restore"

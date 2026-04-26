@@ -135,7 +135,7 @@ services:
       BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-6}
       BACKUP_EXCLUDE_SITES: ${BACKUP_EXCLUDE_SITES:-}
     volumes:
-      - ./sites:/var/www/sites:ro             # Read-only access to source files
+      - ./sites:/var/www/sites        # Source files (read for backup, write for restore)
       - ./backups:/backups            # Destination for backup repo
     depends_on:
       - mysql

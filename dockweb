@@ -65,10 +65,13 @@ show_usage() {
     echo "    cloudflare verify [<name>]   Verify credentials for one or all accounts"
     echo ""
     echo "  Backup:"
-    echo "    backup now          Run backup immediately"
-    echo "    backup list         List backup snapshots"
-    echo "    backup restore      Restore from backup"
-    echo "    backup test         Test backup restore"
+    echo "    backup now              Run backup immediately"
+    echo "    backup list             List backup snapshots"
+    echo "    backup restore          Restore from backup"
+    echo "    backup test             Test backup restore"
+    echo "    backup excludes         List sites currently excluded from backup"
+    echo "    backup exclude <domain> Skip a site (files + DB) on next backup"
+    echo "    backup include <domain> Re-enable backup for a previously excluded site"
     echo ""
     echo "  Cache:"
     echo "    cache                     Cache management menu"
@@ -120,12 +123,13 @@ show_menu() {
         echo "    20) Self-update (scripts only)"
         echo "    21) Configure swap"
         echo "    22) Cloudflare accounts"
+        echo "    23) Backup excludes"
         echo ""
         echo -e "  ${DIM}[!] = requires confirmation${NC}"
         echo ""
         echo "    0) Exit"
         echo ""
-        echo -ne "  Choose [0-22]: "
+        echo -ne "  Choose [0-23]: "
         read -r choice
 
         case "$choice" in
@@ -151,6 +155,7 @@ show_menu() {
             20) cmd_self_update ;;
             21) setup_swap ;;
             22) cmd_cloudflare_menu ;;
+            23) _config_backup_exclude_sites ;;
             0)  echo ""; log_info "Bye!"; exit 0 ;;
             *)  log_error "Invalid choice." ;;
         esac
@@ -217,11 +222,14 @@ main() {
             ;;
         backup)
             case "${2:-}" in
-                now)     cmd_backup_now ;;
-                list)    cmd_backup_list ;;
-                restore) cmd_backup_restore ;;
-                test)    cmd_backup_test ;;
-                *)       log_error "Usage: dockweb backup {now|list|restore|test}" ;;
+                now)      cmd_backup_now ;;
+                list)     cmd_backup_list ;;
+                restore)  cmd_backup_restore ;;
+                test)     cmd_backup_test ;;
+                excludes) cmd_backup_excludes ;;
+                exclude)  cmd_backup_exclude "${3:-}" ;;
+                include)  cmd_backup_include "${3:-}" ;;
+                *)        log_error "Usage: dockweb backup {now|list|restore|test|excludes|exclude <domain>|include <domain>}" ;;
             esac
             ;;
         cache)
