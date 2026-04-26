@@ -756,18 +756,22 @@ _cf_verify_token() {
     [[ "$success" == "true" ]]
 }
 
-# Verify an Origin CA Key by listing existing certificates (read-only).
-# Cloudflare returns success:false on bad keys, success:true on valid ones
-# even if the result list is empty.
+# Verify an Origin CA Key by hitting /certificates with no zone_id.
+# Cloudflare validates the key BEFORE complaining about the missing
+# zone_id, so a valid key gets `success:false` + `code:1012` ("Please
+# provide a zone id..."), while a bad key gets an auth error (e.g.
+# code 9106). We treat code 1012 as the positive auth signal.
 _cf_verify_origin_ca_key() {
     local key="$1"
-    local resp success
+    local resp success code
     resp=$(curl -sS --max-time 10 \
         -H "X-Auth-User-Service-Key: ${key}" \
         -H "Content-Type: application/json" \
         "https://api.cloudflare.com/client/v4/certificates" 2>/dev/null) || return 1
     success=$(echo "$resp" | _extract_json_bool "success")
-    [[ "$success" == "true" ]]
+    [[ "$success" == "true" ]] && return 0
+    code=$(echo "$resp" | grep -oE '"code":[0-9]+' | head -1 | grep -oE '[0-9]+')
+    [[ "$code" == "1012" ]]
 }
 
 # Read KEY=... from .env. Strips outer matching quotes and a trailing CR
