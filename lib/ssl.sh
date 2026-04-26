@@ -775,14 +775,23 @@ _cf_verify_origin_ca_key() {
     [[ "$success" == "true" ]]
 }
 
-# Read KEY=... from .env, echoing the raw value (no quoting handling).
+# Read KEY=... from .env. Strips outer matching quotes and a trailing CR
+# so values written as KEY="abc" or saved with CRLF endings parse the same
+# way `source .env` would see them.
 _cf_env_get() {
     local key="$1"
     local env_file="${DOCKWEB_ROOT}/.env"
     [[ -f "$env_file" ]] || { echo ""; return 0; }
     awk -v key="$key" '
         index($0, key "=") == 1 {
-            print substr($0, length(key) + 2)
+            val = substr($0, length(key) + 2)
+            sub(/\r$/, "", val)
+            first = substr(val, 1, 1)
+            last  = substr(val, length(val), 1)
+            if ((first == "\"" && last == "\"") || (first == "\047" && last == "\047")) {
+                val = substr(val, 2, length(val) - 2)
+            }
+            print val
             exit
         }
     ' "$env_file"
