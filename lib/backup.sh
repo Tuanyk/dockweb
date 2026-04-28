@@ -116,7 +116,7 @@ _restic_restore_db() {
             [[ -z "$dump" ]] && continue
             domain="${dump%.sql}"
             log_info "  importing ${domain}..."
-            docker exec backup_service sh -c "mysql -h shared_mysql -u root -p'${DB_ROOT_PASSWORD}' < /tmp/restore/tmp/db_dumps/${dump}"
+            docker exec backup_service sh -c "mysql -h shared_mysql -u root -p'${DB_ROOT_PASSWORD}' --skip-ssl < /tmp/restore/tmp/db_dumps/${dump}"
             _regrant_site_user "$domain"
             count=$((count + 1))
         done <<< "$dumps"
@@ -131,7 +131,7 @@ _restic_restore_db() {
     _restic restore "$snapshot" --target /tmp/restore --include /tmp/all_databases.sql
 
     if docker exec backup_service test -f /tmp/restore/tmp/all_databases.sql; then
-        docker exec backup_service sh -c "mysql -h shared_mysql -u root -p'${DB_ROOT_PASSWORD}' < /tmp/restore/tmp/all_databases.sql"
+        docker exec backup_service sh -c "mysql -h shared_mysql -u root -p'${DB_ROOT_PASSWORD}' --skip-ssl < /tmp/restore/tmp/all_databases.sql"
         docker exec backup_service rm -rf /tmp/restore
         log_success "Database restored (legacy layout)."
     else

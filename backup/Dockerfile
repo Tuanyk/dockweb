@@ -1,7 +1,9 @@
 FROM alpine:latest
 
-# Install Restic, MySQL Client (for dumping DB), and Bash
-RUN apk add --no-cache restic mariadb-client bash
+# Install Restic, MySQL Client (for dumping DB), Bash, and tzdata
+# (tzdata lets crond honor the BACKUP_TIMEZONE env var so schedules
+# run in the operator's local time rather than UTC.)
+RUN apk add --no-cache restic mariadb-client bash tzdata
 
 # Create directories
 RUN mkdir -p /backups /sites /scripts

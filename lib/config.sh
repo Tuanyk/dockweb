@@ -80,6 +80,7 @@ cmd_config_show() {
     else
         echo "    Status:          ${GREEN}enabled${NC}"
         echo "    Schedule:        $(get_env_val BACKUP_SCHEDULE '0 3 * * *')"
+        echo "    Timezone:        $(get_env_val BACKUP_TIMEZONE 'UTC')"
         echo "    Retention:       $(get_env_val BACKUP_KEEP_DAILY 7)d / $(get_env_val BACKUP_KEEP_WEEKLY 4)w / $(get_env_val BACKUP_KEEP_MONTHLY 6)m"
         echo "    Alert email:     $(get_env_val ALERT_EMAIL '(not set)')"
     fi
@@ -141,8 +142,9 @@ cmd_config_backup() {
     local backup_enabled
     backup_enabled=$(get_env_val BACKUP_ENABLED "true")
 
-    local current_schedule current_daily current_weekly current_monthly
+    local current_schedule current_tz current_daily current_weekly current_monthly
     current_schedule=$(get_env_val BACKUP_SCHEDULE "0 3 * * *")
+    current_tz=$(get_env_val BACKUP_TIMEZONE "UTC")
     current_daily=$(get_env_val BACKUP_KEEP_DAILY 7)
     current_weekly=$(get_env_val BACKUP_KEEP_WEEKLY 4)
     current_monthly=$(get_env_val BACKUP_KEEP_MONTHLY 6)
@@ -156,6 +158,7 @@ cmd_config_backup() {
     else
         echo -e "  Status: ${GREEN}enabled${NC}"
         echo "    Schedule:     $current_schedule"
+        echo "    Timezone:     $current_tz"
         echo "    Retention:    ${current_daily} daily / ${current_weekly} weekly / ${current_monthly} monthly"
         echo "    Alert email:  $(get_env_val ALERT_EMAIL '(not set)')"
         if [[ -n "$current_exclude" ]]; then
@@ -175,6 +178,7 @@ cmd_config_backup() {
         echo "    3) Retention policy (how many backups to keep)"
         echo "    4) Alert email"
         echo "    5) Exclude sites from backup"
+        echo "    6) Timezone (currently: ${current_tz})"
     fi
     echo "    0) Back"
     echo ""
@@ -261,9 +265,65 @@ cmd_config_backup() {
         5)
             _config_backup_exclude_sites
             ;;
+        6)
+            _config_backup_timezone
+            ;;
         0) return 0 ;;
         *) log_error "Invalid choice." ;;
     esac
+}
+
+_config_backup_timezone() {
+    local current_tz
+    current_tz=$(get_env_val BACKUP_TIMEZONE "UTC")
+
+    echo ""
+    echo "  Timezone controls when the schedule fires."
+    echo "  Example: '0 3 * * *' with timezone 'Asia/Ho_Chi_Minh' = 3 AM UTC+7."
+    echo ""
+    echo "  Current: ${current_tz}"
+    echo ""
+    echo "  Presets:"
+    echo "    1) UTC                 (UTC+0)"
+    echo "    2) Asia/Ho_Chi_Minh    (UTC+7, Vietnam)"
+    echo "    3) Asia/Bangkok        (UTC+7, Thailand)"
+    echo "    4) Asia/Singapore      (UTC+8)"
+    echo "    5) Asia/Tokyo          (UTC+9)"
+    echo "    6) Europe/London       (UTC+0/+1)"
+    echo "    7) Europe/Berlin       (UTC+1/+2)"
+    echo "    8) America/New_York    (UTC-5/-4)"
+    echo "    9) America/Los_Angeles (UTC-8/-7)"
+    echo "    c) Custom (any IANA name, e.g. Australia/Sydney)"
+    echo ""
+    echo -ne "  Choose: "
+    read -r tz_choice
+
+    local new_tz
+    case "$tz_choice" in
+        1) new_tz="UTC" ;;
+        2) new_tz="Asia/Ho_Chi_Minh" ;;
+        3) new_tz="Asia/Bangkok" ;;
+        4) new_tz="Asia/Singapore" ;;
+        5) new_tz="Asia/Tokyo" ;;
+        6) new_tz="Europe/London" ;;
+        7) new_tz="Europe/Berlin" ;;
+        8) new_tz="America/New_York" ;;
+        9) new_tz="America/Los_Angeles" ;;
+        c|C)
+            echo -ne "  IANA timezone (e.g. Australia/Sydney): "
+            read -r new_tz
+            ;;
+        *) log_error "Invalid."; return 1 ;;
+    esac
+
+    if [[ -z "$new_tz" ]]; then
+        log_error "Empty timezone."
+        return 1
+    fi
+
+    set_env_val "BACKUP_TIMEZONE" "$new_tz"
+    log_success "Backup timezone set to: $new_tz"
+    _config_backup_apply_hint
 }
 
 _config_backup_exclude_sites() {
@@ -581,8 +641,10 @@ cmd_config_resources() {
 _config_backup_apply_hint() {
     if docker ps --format '{{.Names}}' | grep -q '^backup_service$'; then
         echo ""
-        log_info "Restarting backup container to apply changes..."
-        $(docker_compose_cmd) up -d --no-deps backup
+        log_info "Rebuilding & restarting backup container to apply changes..."
+        # --build picks up Dockerfile/script changes (e.g. tzdata install).
+        # docker's layer cache makes this near-instant when nothing changed.
+        $(docker_compose_cmd) up -d --build --no-deps backup
         log_success "Backup container restarted."
     else
         echo ""

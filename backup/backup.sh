@@ -87,7 +87,10 @@ for conf in "$SITES_ROOT"/*/.dockweb.conf; do
     fi
 
     out="$DB_DUMP_DIR/${domain}.sql"
+    # --skip-ssl: shared_mysql ships a self-signed cert and the client would
+    # otherwise refuse to connect. Traffic stays on the docker bridge network.
     mysqldump -h shared_mysql -u root -p"$DB_ROOT_PASSWORD" \
+        --skip-ssl \
         --databases "$db_name" \
         --single-transaction --quick --lock-tables=false \
         > "$out" 2>/dev/null
