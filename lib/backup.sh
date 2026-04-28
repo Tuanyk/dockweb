@@ -246,6 +246,11 @@ cmd_backup_remotes() {
     docker exec backup_service rclone listremotes --config /config/rclone/rclone.conf
 }
 
+_backup_first_rclone_remote() {
+    docker exec backup_service rclone listremotes --config /config/rclone/rclone.conf 2>/dev/null \
+        | head -1 | sed 's/:$//'
+}
+
 cmd_backup_setup_drive() {
     header "Configure Google Drive Offsite Backup"
     _backup_check_running || return 1
@@ -257,7 +262,8 @@ cmd_backup_setup_drive() {
     echo ""
 
     if confirm "Open rclone config now?" "y"; then
-        log_info "Create a Google Drive remote, commonly named: gdrive"
+        log_info "When rclone asks for 'name>', enter a remote name such as: gdrive"
+        log_info "Later, when it asks for storage type, choose Google Drive (type: drive)."
         echo ""
         docker exec backup_service mkdir -p /config/rclone
         docker exec -it backup_service rclone config --config /config/rclone/rclone.conf
@@ -303,9 +309,18 @@ _backup_configure_offsite_env() {
     current_notify=$(get_env_val BACKUP_NOTIFY_NAME "dockweb")
     current_tg_chat=$(get_env_val TELEGRAM_CHAT_ID "")
 
+    local detected_remote
+    detected_remote=$(_backup_first_rclone_remote)
+    if [[ -n "$detected_remote" && "$current_remote" == "gdrive:dockweb-backups/repo" ]]; then
+        current_remote="${detected_remote}:dockweb-backups/repo"
+    fi
+
     echo ""
     echo "  Offsite backup destination"
     echo "    Example: gdrive:dockweb-backups/repo"
+    if [[ -n "$detected_remote" ]]; then
+        echo "    Detected rclone remote: ${detected_remote}:"
+    fi
     echo ""
 
     if confirm "Enable Google Drive offsite backup?" "y"; then
