@@ -135,9 +135,19 @@ services:
       BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-4}
       BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-6}
       BACKUP_EXCLUDE_SITES: ${BACKUP_EXCLUDE_SITES:-}
+      BACKUP_NOTIFY_NAME: ${BACKUP_NOTIFY_NAME:-dockweb}
+      OFFSITE_BACKUP_ENABLED: ${OFFSITE_BACKUP_ENABLED:-false}
+      OFFSITE_BACKUP_REMOTE: ${OFFSITE_BACKUP_REMOTE:-}
+      OFFSITE_BACKUP_MODE: ${OFFSITE_BACKUP_MODE:-sync}
+      RCLONE_CONFIG: /config/rclone/rclone.conf
+      RCLONE_TRANSFERS: ${RCLONE_TRANSFERS:-4}
+      RCLONE_CHECKERS: ${RCLONE_CHECKERS:-8}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     volumes:
       - ./sites:/var/www/sites        # Source files (read for backup, write for restore)
       - ./backups:/backups            # Destination for backup repo
+      - ./rclone:/config/rclone       # rclone config/token for offsite sync
     depends_on:
       - mysql
     networks:

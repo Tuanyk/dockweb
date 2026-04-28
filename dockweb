@@ -69,6 +69,7 @@ show_usage() {
     echo "    backup list             List backup snapshots"
     echo "    backup restore          Restore from backup"
     echo "    backup test             Test backup restore"
+    echo "    backup setup-drive      Configure Google Drive remote via rclone"
     echo "    backup excludes         List sites currently excluded from backup"
     echo "    backup exclude <domain> Skip a site (files + DB) on next backup"
     echo "    backup include <domain> Re-enable backup for a previously excluded site"
@@ -226,10 +227,11 @@ main() {
                 list)     cmd_backup_list ;;
                 restore)  cmd_backup_restore ;;
                 test)     cmd_backup_test ;;
+                setup-drive) cmd_backup_setup_drive ;;
                 excludes) cmd_backup_excludes ;;
                 exclude)  cmd_backup_exclude "${3:-}" ;;
                 include)  cmd_backup_include "${3:-}" ;;
-                *)        log_error "Usage: dockweb backup {now|list|restore|test|excludes|exclude <domain>|include <domain>}" ;;
+                *)        log_error "Usage: dockweb backup {now|list|restore|test|setup-drive|excludes|exclude <domain>|include <domain>}" ;;
             esac
             ;;
         cache)

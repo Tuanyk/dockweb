@@ -14,6 +14,7 @@ nginx/conf.d/*.conf
 mysql/data/
 logs/
 backups/
+rclone/
 nginx/cache/
 
 # SSL certificates (sensitive)

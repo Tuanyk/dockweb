@@ -116,6 +116,7 @@ Backup:
   dockweb backup list         List snapshots
   dockweb backup restore      Interactive restore
   dockweb backup test         Test restore (non-destructive)
+  dockweb backup setup-drive  Configure Google Drive remote via rclone
 
 Monitoring:
   dockweb log [service]       View logs (nginx, mysql, php, etc.)
@@ -227,6 +228,27 @@ ssh -L 8888:localhost:8888 -L 61208:localhost:61208 user@your-server
 ./dockweb backup test     # test restore (non-destructive)
 ./dockweb update          # pull latest Docker images
 ```
+
+### Optional: Google Drive offsite backup
+
+Backups are always written locally first under `./backups/repo`. To mirror that Restic repository to Google Drive:
+
+```bash
+./dockweb update backup
+./dockweb backup setup-drive
+```
+
+Create a Google Drive remote, for example `gdrive`, then set these in `.env`:
+
+```bash
+OFFSITE_BACKUP_ENABLED=true
+OFFSITE_BACKUP_REMOTE=gdrive:dockweb-backups/repo
+OFFSITE_BACKUP_MODE=sync
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+```
+
+`sync` mirrors local retention to Drive. Use `copy` if you prefer never deleting remote files, at the cost of more Drive storage.
 
 ---
 

@@ -1,16 +1,86 @@
 #!/bin/bash
 
+send_telegram() {
+    local text="$1"
+
+    [ -n "$TELEGRAM_BOT_TOKEN" ] || return 0
+    [ -n "$TELEGRAM_CHAT_ID" ] || return 0
+
+    curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+        --data-urlencode "text=${text}" \
+        >/dev/null 2>&1 || echo "WARNING: Telegram notification failed"
+}
+
 # Function to send alert
 send_alert() {
     local subject="$1"
     local message="$2"
 
     echo "[ALERT] $subject: $message"
+    send_telegram "${subject}
+
+${message}"
 
     # If email is configured, send it
     if [ -n "$ALERT_EMAIL" ]; then
         echo "$message" | mail -s "$subject" "$ALERT_EMAIL" 2>/dev/null || true
     fi
+}
+
+send_success() {
+    local message="$1"
+    send_telegram "Backup Successful
+
+${message}"
+}
+
+run_offsite_sync() {
+    local enabled="${OFFSITE_BACKUP_ENABLED:-false}"
+    local remote="${OFFSITE_BACKUP_REMOTE:-}"
+    local mode="${OFFSITE_BACKUP_MODE:-sync}"
+    local transfers="${RCLONE_TRANSFERS:-4}"
+    local checkers="${RCLONE_CHECKERS:-8}"
+
+    [ "$enabled" = "true" ] || return 0
+
+    if [ -z "$remote" ]; then
+        send_alert "Backup Failed" "OFFSITE_BACKUP_ENABLED=true but OFFSITE_BACKUP_REMOTE is empty."
+        return 1
+    fi
+
+    if ! command -v rclone >/dev/null 2>&1; then
+        send_alert "Backup Failed" "rclone is not installed in the backup container."
+        return 1
+    fi
+
+    if [ ! -f "${RCLONE_CONFIG:-/config/rclone/rclone.conf}" ]; then
+        send_alert "Backup Failed" "rclone config not found at ${RCLONE_CONFIG:-/config/rclone/rclone.conf}."
+        return 1
+    fi
+
+    case "$mode" in
+        copy|sync) ;;
+        *)
+            send_alert "Backup Failed" "Invalid OFFSITE_BACKUP_MODE '$mode' (use copy or sync)."
+            return 1
+            ;;
+    esac
+
+    echo "Syncing Restic repository to offsite remote: $remote (mode: $mode)"
+    rclone "$mode" "$RESTIC_REPOSITORY" "$remote" \
+        --config "${RCLONE_CONFIG:-/config/rclone/rclone.conf}" \
+        --fast-list \
+        --transfers "$transfers" \
+        --checkers "$checkers" \
+        --stats-one-line
+
+    if [ $? -ne 0 ]; then
+        send_alert "Backup Failed" "Local backup completed, but offsite rclone $mode to '$remote' failed."
+        return 1
+    fi
+
+    return 0
 }
 
 # Read a KEY=value from a .dockweb.conf, stripping any surrounding quotes
@@ -245,8 +315,25 @@ restic forget --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --keep-mon
 # 7. Clean up
 rm -rf "$DB_DUMP_DIR"
 
-# 8. Show statistics
+# 8. Sync offsite copy (optional)
+if ! run_offsite_sync; then
+    exit 1
+fi
+
+# 9. Show statistics
 echo "Backup Statistics:"
 restic stats latest --mode raw-data
+
+if [ "${OFFSITE_BACKUP_ENABLED:-false}" = "true" ]; then
+    offsite_status="enabled (${OFFSITE_BACKUP_MODE:-sync}: ${OFFSITE_BACKUP_REMOTE:-not set})"
+else
+    offsite_status="disabled"
+fi
+
+send_success "Host: ${BACKUP_NOTIFY_NAME:-dockweb}
+Databases dumped: ${DUMPED_COUNT}
+Databases skipped: ${SKIPPED_COUNT}
+Offsite: ${offsite_status}
+Completed: $(date)"
 
 echo "--- Backup Completed Successfully $(date) ---"

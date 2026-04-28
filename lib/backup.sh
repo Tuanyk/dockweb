@@ -232,6 +232,24 @@ cmd_backup_test() {
     docker exec backup_service /scripts/test-restore.sh
 }
 
+cmd_backup_setup_drive() {
+    header "Configure Google Drive Offsite Backup"
+    _backup_check_running || return 1
+
+    if ! docker exec backup_service command -v rclone >/dev/null 2>&1; then
+        log_error "rclone is not installed in backup_service. Run: ./dockweb update backup"
+        return 1
+    fi
+
+    log_info "This opens rclone's interactive config inside backup_service."
+    log_info "Create a Google Drive remote, commonly named: gdrive"
+    log_info "The OAuth token will be saved under ./rclone/ (ignored by git)."
+    echo ""
+
+    docker exec backup_service mkdir -p /config/rclone
+    docker exec -it backup_service rclone config --config /config/rclone/rclone.conf
+}
+
 # ---------------------------------------------------------------------------
 # Per-site backup exclusion (CLI)
 # ---------------------------------------------------------------------------

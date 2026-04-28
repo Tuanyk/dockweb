@@ -148,6 +148,9 @@ cmd_config_backup() {
     current_daily=$(get_env_val BACKUP_KEEP_DAILY 7)
     current_weekly=$(get_env_val BACKUP_KEEP_WEEKLY 4)
     current_monthly=$(get_env_val BACKUP_KEEP_MONTHLY 6)
+    local current_offsite current_offsite_remote
+    current_offsite=$(get_env_val OFFSITE_BACKUP_ENABLED "false")
+    current_offsite_remote=$(get_env_val OFFSITE_BACKUP_REMOTE "")
 
     local current_exclude
     current_exclude=$(get_env_val BACKUP_EXCLUDE_SITES "")
@@ -161,6 +164,11 @@ cmd_config_backup() {
         echo "    Timezone:     $current_tz"
         echo "    Retention:    ${current_daily} daily / ${current_weekly} weekly / ${current_monthly} monthly"
         echo "    Alert email:  $(get_env_val ALERT_EMAIL '(not set)')"
+        if [[ "$current_offsite" == "true" ]]; then
+            echo "    Offsite:      enabled (${current_offsite_remote:-remote not set})"
+        else
+            echo "    Offsite:      disabled"
+        fi
         if [[ -n "$current_exclude" ]]; then
             echo -e "    Excluded:     ${YELLOW}${current_exclude}${NC}"
         else
