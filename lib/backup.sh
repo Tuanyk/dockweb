@@ -232,6 +232,20 @@ cmd_backup_test() {
     docker exec backup_service /scripts/test-restore.sh
 }
 
+cmd_backup_remotes() {
+    header "Configured rclone remotes"
+    _backup_check_running || return 1
+    _backup_ensure_rclone || return 1
+
+    if ! docker exec backup_service test -f /config/rclone/rclone.conf; then
+        log_warn "No rclone config found at ./rclone/rclone.conf"
+        log_info "Run: ./dockweb backup setup-drive"
+        return 1
+    fi
+
+    docker exec backup_service rclone listremotes --config /config/rclone/rclone.conf
+}
+
 cmd_backup_setup_drive() {
     header "Configure Google Drive Offsite Backup"
     _backup_check_running || return 1
