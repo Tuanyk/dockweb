@@ -236,10 +236,7 @@ cmd_backup_setup_drive() {
     header "Configure Google Drive Offsite Backup"
     _backup_check_running || return 1
 
-    if ! docker exec backup_service command -v rclone >/dev/null 2>&1; then
-        log_error "rclone is not installed in backup_service. Run: ./dockweb update backup"
-        return 1
-    fi
+    _backup_ensure_rclone || return 1
 
     log_info "This wizard configures rclone, offsite backup settings, and Telegram notifications."
     log_info "The Google OAuth token will be saved under ./rclone/ (ignored by git)."
@@ -259,6 +256,28 @@ cmd_backup_setup_drive() {
     else
         log_info "Apply later with: ./dockweb update backup"
     fi
+}
+
+_backup_ensure_rclone() {
+    if docker exec backup_service command -v rclone >/dev/null 2>&1; then
+        return 0
+    fi
+
+    log_warn "rclone is not installed in the running backup_service container."
+    if confirm "Rebuild and recreate backup_service now?" "y"; then
+        local cmd
+        cmd="$(docker_compose_cmd)"
+        $cmd up -d --no-deps --build --force-recreate backup
+        if docker exec backup_service command -v rclone >/dev/null 2>&1; then
+            log_success "backup_service rebuilt with rclone."
+            return 0
+        fi
+    fi
+
+    log_error "rclone is still missing from backup_service."
+    log_info "Try a clean rebuild: docker compose -f docker-compose.yml -f docker-compose.sites.yml build --no-cache backup"
+    log_info "Then recreate it: ./dockweb update backup"
+    return 1
 }
 
 _backup_configure_offsite_env() {

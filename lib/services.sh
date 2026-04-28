@@ -370,6 +370,11 @@ _update_single_service() {
             _wait_healthy "gateway_nginx" 30
             log_success "Nginx updated."
             ;;
+        backup)
+            header "Updating Backup Service"
+            $cmd up -d --no-deps --build --force-recreate backup
+            log_success "Backup service updated."
+            ;;
         *)
             # PHP container (service name == container name) or infrastructure.
             header "Updating ${service}"
