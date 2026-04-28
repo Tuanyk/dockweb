@@ -8,6 +8,12 @@ set -e
 export RESTIC_REPOSITORY=/backups/repo
 TEST_DIR=/tmp/restore-test-$(date +%s)
 
+looks_like_mysql_dump() {
+    local file="$1"
+    head -40 "$file" 2>/dev/null | grep -Eq \
+        '^(-- (MySQL|MariaDB) dump|/\*M!999999|CREATE DATABASE|USE `)'
+}
+
 echo "### Backup Restoration Test ###"
 echo "Test directory: $TEST_DIR"
 echo ""
@@ -46,7 +52,7 @@ if [ "$SITE_DIR_COUNT" -gt 0 ]; then
 
         for f in "$site_dir"/*.sql; do
             [ -f "$f" ] || continue
-            if head -20 "$f" 2>/dev/null | grep -Eq "^(CREATE DATABASE|-- MySQL dump)"; then
+            if looks_like_mysql_dump "$f"; then
                 :
             else
                 echo "  ✗ $(basename "$site_dir")/$(basename "$f") may not be a valid MySQL dump"
@@ -66,7 +72,7 @@ if [ "$SITE_DIR_COUNT" -eq 0 ] && [ "$DUMP_COUNT" -gt 0 ]; then
     echo "✓ Restored $DUMP_COUNT per-site database dump(s)"
     BAD=0
     for f in "$TEST_DIR/tmp/db_dumps"/*.sql; do
-        if head -1 "$f" 2>/dev/null | grep -q "MySQL dump"; then
+        if looks_like_mysql_dump "$f"; then
             SIZE=$(du -h "$f" | cut -f1)
             echo "  ✓ $(basename "$f") (Size: $SIZE)"
         else
@@ -86,7 +92,7 @@ else
     if [ -f "$TEST_DIR/tmp/all_databases.sql" ]; then
         SIZE=$(du -h "$TEST_DIR/tmp/all_databases.sql" | cut -f1)
         echo "✓ Database dump restored successfully (Size: $SIZE)"
-        if head -1 "$TEST_DIR/tmp/all_databases.sql" | grep -q "MySQL dump"; then
+        if looks_like_mysql_dump "$TEST_DIR/tmp/all_databases.sql"; then
             echo "✓ File appears to be a valid MySQL dump"
         else
             echo "✗ WARNING: File may not be a valid MySQL dump"
