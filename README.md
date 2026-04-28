@@ -240,7 +240,8 @@ Backups are always written locally first under `./backups/repo`. To mirror that 
 
 The wizard opens rclone's Google Drive setup, then asks for the Drive remote path,
 upload mode, and optional Telegram channel settings. It writes the matching
-values to `.env`, for example:
+values to `.env`. The same wizard is also available from `dockweb config backup`
+under "Google Drive + Telegram setup". Example values:
 
 ```bash
 OFFSITE_BACKUP_ENABLED=true

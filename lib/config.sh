@@ -278,8 +278,7 @@ cmd_config_backup() {
             _config_backup_timezone
             ;;
         7)
-            _backup_configure_offsite_env
-            _config_backup_apply_hint
+            cmd_backup_setup_drive
             ;;
         0) return 0 ;;
         *) log_error "Invalid choice." ;;
