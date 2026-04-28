@@ -187,6 +187,7 @@ cmd_config_backup() {
         echo "    4) Alert email"
         echo "    5) Exclude sites from backup"
         echo "    6) Timezone (currently: ${current_tz})"
+        echo "    7) Google Drive + Telegram setup"
     fi
     echo "    0) Back"
     echo ""
@@ -275,6 +276,10 @@ cmd_config_backup() {
             ;;
         6)
             _config_backup_timezone
+            ;;
+        7)
+            _backup_configure_offsite_env
+            _config_backup_apply_hint
             ;;
         0) return 0 ;;
         *) log_error "Invalid choice." ;;

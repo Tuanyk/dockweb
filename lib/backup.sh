@@ -241,13 +241,97 @@ cmd_backup_setup_drive() {
         return 1
     fi
 
-    log_info "This opens rclone's interactive config inside backup_service."
-    log_info "Create a Google Drive remote, commonly named: gdrive"
-    log_info "The OAuth token will be saved under ./rclone/ (ignored by git)."
+    log_info "This wizard configures rclone, offsite backup settings, and Telegram notifications."
+    log_info "The Google OAuth token will be saved under ./rclone/ (ignored by git)."
     echo ""
 
-    docker exec backup_service mkdir -p /config/rclone
-    docker exec -it backup_service rclone config --config /config/rclone/rclone.conf
+    if confirm "Open rclone config now?" "y"; then
+        log_info "Create a Google Drive remote, commonly named: gdrive"
+        echo ""
+        docker exec backup_service mkdir -p /config/rclone
+        docker exec -it backup_service rclone config --config /config/rclone/rclone.conf
+    fi
+
+    _backup_configure_offsite_env
+
+    if confirm "Restart backup_service now to apply these settings?" "y"; then
+        _config_backup_apply_hint
+    else
+        log_info "Apply later with: ./dockweb update backup"
+    fi
+}
+
+_backup_configure_offsite_env() {
+    load_env
+
+    local current_remote current_mode current_notify current_tg_chat
+    current_remote=$(get_env_val OFFSITE_BACKUP_REMOTE "gdrive:dockweb-backups/repo")
+    current_mode=$(get_env_val OFFSITE_BACKUP_MODE "sync")
+    current_notify=$(get_env_val BACKUP_NOTIFY_NAME "dockweb")
+    current_tg_chat=$(get_env_val TELEGRAM_CHAT_ID "")
+
+    echo ""
+    echo "  Offsite backup destination"
+    echo "    Example: gdrive:dockweb-backups/repo"
+    echo ""
+
+    if confirm "Enable Google Drive offsite backup?" "y"; then
+        local new_remote new_mode new_notify
+
+        echo -ne "  Remote path [${current_remote}]: "
+        read -r new_remote
+        new_remote="${new_remote:-$current_remote}"
+
+        echo ""
+        echo "  Upload mode:"
+        echo "    1) sync - mirror local retention to Drive"
+        echo "    2) copy - upload new/changed files, never delete remote"
+        echo -ne "  Choose [1-2] [$( [[ "$current_mode" == "copy" ]] && echo 2 || echo 1 )]: "
+        read -r mode_choice
+        case "${mode_choice:-$([[ "$current_mode" == "copy" ]] && echo 2 || echo 1)}" in
+            1) new_mode="sync" ;;
+            2) new_mode="copy" ;;
+            *) log_error "Invalid upload mode."; return 1 ;;
+        esac
+
+        echo -ne "  Notification name [${current_notify}]: "
+        read -r new_notify
+        new_notify="${new_notify:-$current_notify}"
+
+        set_env_val "OFFSITE_BACKUP_ENABLED" "true"
+        set_env_val "OFFSITE_BACKUP_REMOTE" "$new_remote"
+        set_env_val "OFFSITE_BACKUP_MODE" "$new_mode"
+        set_env_val "BACKUP_NOTIFY_NAME" "$new_notify"
+        log_success "Google Drive offsite backup settings updated."
+    else
+        set_env_val "OFFSITE_BACKUP_ENABLED" "false"
+        log_success "Google Drive offsite backup disabled."
+    fi
+
+    echo ""
+    if confirm "Configure Telegram backup notifications?" "y"; then
+        local new_token new_chat
+
+        echo "  Bot token: leave blank to keep current, or type '-' to clear."
+        echo -ne "  Bot token: "
+        read -rs new_token
+        echo ""
+        if [[ "$new_token" == "-" ]]; then
+            set_env_val "TELEGRAM_BOT_TOKEN" ""
+        elif [[ -n "$new_token" ]]; then
+            set_env_val "TELEGRAM_BOT_TOKEN" "$new_token"
+        fi
+
+        echo -ne "  Chat ID or @channel [${current_tg_chat:-not set}]: "
+        read -r new_chat
+        if [[ "$new_chat" == "-" ]]; then
+            set_env_val "TELEGRAM_CHAT_ID" ""
+        elif [[ -n "$new_chat" ]]; then
+            set_env_val "TELEGRAM_CHAT_ID" "$new_chat"
+        fi
+
+        log_success "Telegram notification settings updated."
+    fi
 }
 
 # ---------------------------------------------------------------------------

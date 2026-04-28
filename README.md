@@ -238,7 +238,9 @@ Backups are always written locally first under `./backups/repo`. To mirror that 
 ./dockweb backup setup-drive
 ```
 
-Create a Google Drive remote, for example `gdrive`, then set these in `.env`:
+The wizard opens rclone's Google Drive setup, then asks for the Drive remote path,
+upload mode, and optional Telegram channel settings. It writes the matching
+values to `.env`, for example:
 
 ```bash
 OFFSITE_BACKUP_ENABLED=true
