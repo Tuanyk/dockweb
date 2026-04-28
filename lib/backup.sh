@@ -94,7 +94,36 @@ _restic_restore_files() {
     log_success "Site files restored."
 }
 
-# Restore databases. Per-site dumps for new snapshots, all_databases.sql for legacy.
+# Import one site's current per-table dump directory.
+_backup_import_dump_dir() {
+    local site="$1"
+    docker exec -e DB_ROOT_PASSWORD="$DB_ROOT_PASSWORD" backup_service sh -c '
+        set -e
+        site="$1"
+        dir="/tmp/restore/tmp/db_dumps/$site"
+        {
+            printf "%s\n" "SET FOREIGN_KEY_CHECKS=0;"
+            find "$dir" -maxdepth 1 -type f -name "*.sql" | sort | while IFS= read -r f; do
+                cat "$f"
+                printf "\n"
+            done
+            printf "%s\n" "SET FOREIGN_KEY_CHECKS=1;"
+        } | mysql -h shared_mysql -u root -p"$DB_ROOT_PASSWORD" --skip-ssl
+    ' sh "$site"
+}
+
+# Import one legacy top-level per-site SQL dump.
+_backup_import_dump_file() {
+    local dump="$1"
+    docker exec -e DB_ROOT_PASSWORD="$DB_ROOT_PASSWORD" backup_service sh -c '
+        set -e
+        dump="$1"
+        mysql -h shared_mysql -u root -p"$DB_ROOT_PASSWORD" --skip-ssl < "/tmp/restore/tmp/db_dumps/$dump"
+    ' sh "$dump"
+}
+
+# Restore databases. Supports current per-table dumps, previous per-site dumps,
+# and old all_databases.sql snapshots.
 # After importing each per-site dump, recreate the user/grant from .dockweb.conf
 # so the restored DB is usable on a fresh MySQL.
 _restic_restore_db() {
@@ -103,12 +132,35 @@ _restic_restore_db() {
 
     docker exec backup_service rm -rf /tmp/restore 2>/dev/null || true
 
-    # Try new layout first
+    # Try current /tmp/db_dumps/<domain>/*.sql layout first.
     _restic restore "$snapshot" --target /tmp/restore --include /tmp/db_dumps 2>/dev/null || true
 
-    local dumps
-    dumps=$(docker exec backup_service sh -c 'ls /tmp/restore/tmp/db_dumps/ 2>/dev/null | grep "\.sql$"' 2>/dev/null || true)
+    local sites
+    sites=$(docker exec backup_service sh -c 'for d in /tmp/restore/tmp/db_dumps/*; do [ -d "$d" ] && basename "$d"; done | sort' 2>/dev/null || true)
 
+    if [[ -n "$sites" ]]; then
+        log_info "Restoring per-table database dumps..."
+        local count=0 site file_count
+        while IFS= read -r site; do
+            [[ -z "$site" ]] && continue
+            file_count=$(docker exec backup_service sh -c 'find "/tmp/restore/tmp/db_dumps/$1" -maxdepth 1 -type f -name "*.sql" | wc -l' sh "$site" 2>/dev/null || echo "0")
+            log_info "  importing ${site} (${file_count} file(s))..."
+            if ! _backup_import_dump_dir "$site"; then
+                docker exec backup_service rm -rf /tmp/restore 2>/dev/null || true
+                log_error "Failed to import database dumps for ${site}."
+                return 1
+            fi
+            _regrant_site_user "$site"
+            count=$((count + 1))
+        done <<< "$sites"
+        docker exec backup_service rm -rf /tmp/restore
+        log_success "Restored ${count} site database(s)."
+        return 0
+    fi
+
+    # Fall back to previous /tmp/db_dumps/<domain>.sql layout.
+    local dumps
+    dumps=$(docker exec backup_service sh -c 'for f in /tmp/restore/tmp/db_dumps/*.sql; do [ -f "$f" ] && basename "$f"; done | sort' 2>/dev/null || true)
     if [[ -n "$dumps" ]]; then
         log_info "Restoring per-site database dumps..."
         local count=0 dump domain
@@ -116,7 +168,11 @@ _restic_restore_db() {
             [[ -z "$dump" ]] && continue
             domain="${dump%.sql}"
             log_info "  importing ${domain}..."
-            docker exec backup_service sh -c "mysql -h shared_mysql -u root -p'${DB_ROOT_PASSWORD}' --skip-ssl < /tmp/restore/tmp/db_dumps/${dump}"
+            if ! _backup_import_dump_file "$dump"; then
+                docker exec backup_service rm -rf /tmp/restore 2>/dev/null || true
+                log_error "Failed to import database dump for ${domain}."
+                return 1
+            fi
             _regrant_site_user "$domain"
             count=$((count + 1))
         done <<< "$dumps"
@@ -131,7 +187,11 @@ _restic_restore_db() {
     _restic restore "$snapshot" --target /tmp/restore --include /tmp/all_databases.sql
 
     if docker exec backup_service test -f /tmp/restore/tmp/all_databases.sql; then
-        docker exec backup_service sh -c "mysql -h shared_mysql -u root -p'${DB_ROOT_PASSWORD}' --skip-ssl < /tmp/restore/tmp/all_databases.sql"
+        if ! docker exec -e DB_ROOT_PASSWORD="$DB_ROOT_PASSWORD" backup_service sh -c 'mysql -h shared_mysql -u root -p"$DB_ROOT_PASSWORD" --skip-ssl < /tmp/restore/tmp/all_databases.sql'; then
+            docker exec backup_service rm -rf /tmp/restore 2>/dev/null || true
+            log_error "Failed to import legacy all_databases.sql."
+            return 1
+        fi
         docker exec backup_service rm -rf /tmp/restore
         log_success "Database restored (legacy layout)."
     else

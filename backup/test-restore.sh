@@ -29,13 +29,40 @@ echo "Testing restoration of latest snapshot: $LATEST_SNAPSHOT"
 
 mkdir -p "$TEST_DIR"
 
-# 3. Try the new per-site dump layout first; fall back to legacy single dump.
+# 3. Try the current per-table layout first; fall back to older dump layouts.
 echo "Restoring database dumps..."
 restic restore "$LATEST_SNAPSHOT" --target "$TEST_DIR" --include /tmp/db_dumps 2>/dev/null || true
 
-DUMP_COUNT=$(find "$TEST_DIR/tmp/db_dumps" -maxdepth 1 -name '*.sql' 2>/dev/null | wc -l)
+SITE_DIR_COUNT=$(find "$TEST_DIR/tmp/db_dumps" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
 
-if [ "$DUMP_COUNT" -gt 0 ]; then
+if [ "$SITE_DIR_COUNT" -gt 0 ]; then
+    echo "✓ Restored per-table dumps for $SITE_DIR_COUNT site(s)"
+    BAD=0
+    for site_dir in "$TEST_DIR/tmp/db_dumps"/*; do
+        [ -d "$site_dir" ] || continue
+        DUMP_COUNT=$(find "$site_dir" -maxdepth 1 -name '*.sql' 2>/dev/null | wc -l)
+        SIZE=$(du -sh "$site_dir" | cut -f1)
+        echo "  ✓ $(basename "$site_dir") ($DUMP_COUNT SQL file(s), Size: $SIZE)"
+
+        for f in "$site_dir"/*.sql; do
+            [ -f "$f" ] || continue
+            if head -20 "$f" 2>/dev/null | grep -Eq "^(CREATE DATABASE|-- MySQL dump)"; then
+                :
+            else
+                echo "  ✗ $(basename "$site_dir")/$(basename "$f") may not be a valid MySQL dump"
+                BAD=$((BAD + 1))
+            fi
+        done
+    done
+    if [ "$BAD" -gt 0 ]; then
+        rm -rf "$TEST_DIR"
+        exit 1
+    fi
+else
+    DUMP_COUNT=$(find "$TEST_DIR/tmp/db_dumps" -maxdepth 1 -name '*.sql' 2>/dev/null | wc -l)
+fi
+
+if [ "$SITE_DIR_COUNT" -eq 0 ] && [ "$DUMP_COUNT" -gt 0 ]; then
     echo "✓ Restored $DUMP_COUNT per-site database dump(s)"
     BAD=0
     for f in "$TEST_DIR/tmp/db_dumps"/*.sql; do

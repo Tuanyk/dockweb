@@ -42,6 +42,60 @@ is_excluded() {
     return 1
 }
 
+sql_ident() {
+    printf '%s' "$1" | sed 's/`/``/g'
+}
+
+safe_dump_name() {
+    printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/_/g'
+}
+
+write_database_prelude() {
+    local db_name="$1"
+    local out="$2"
+    local db_sql
+    db_sql=$(sql_ident "$db_name")
+
+    {
+        printf 'CREATE DATABASE IF NOT EXISTS `%s`;\n' "$db_sql"
+        printf 'USE `%s`;\n' "$db_sql"
+    } > "$out"
+}
+
+dump_db_object() {
+    local db_name="$1"
+    local object_name="$2"
+    local object_type="$3"
+    local out="$4"
+    local err="${out}.err"
+    local db_sql
+    local order_flag=()
+
+    db_sql=$(sql_ident "$db_name")
+    if [ "$object_type" = "BASE TABLE" ]; then
+        order_flag=(--order-by-primary)
+    fi
+
+    {
+        printf 'CREATE DATABASE IF NOT EXISTS `%s`;\n' "$db_sql"
+        printf 'USE `%s`;\n\n' "$db_sql"
+        mysqldump -h shared_mysql -u root -p"$DB_ROOT_PASSWORD" \
+            --skip-ssl \
+            --single-transaction --quick --lock-tables=false \
+            --skip-dump-date \
+            "${order_flag[@]}" \
+            "$db_name" "$object_name"
+    } > "$out" 2>"$err"
+
+    if [ $? -ne 0 ] || [ ! -s "$out" ]; then
+        [ -s "$err" ] && sed 's/^/    /' "$err" >&2
+        return 1
+    fi
+
+    rm -f "$err"
+    return 0
+}
+
 echo "--- Starting Backup $(date) ---"
 
 # 1. Configuration
@@ -59,11 +113,12 @@ if [ ! -f "$RESTIC_REPOSITORY/config" ]; then
     fi
 fi
 
-# 3. Per-site database dumps. Each non-excluded site gets its own
-# .sql file containing CREATE DATABASE + schema + data, so it can be
-# restored independently. The user/grant is recreated from .dockweb.conf
-# at restore time, not stored in the dump.
-echo "Dumping databases per site..."
+# 3. Per-site database dumps. Each non-excluded site gets its own directory
+# containing CREATE DATABASE plus one dump per table/view. Splitting dumps this
+# way gives Restic smaller, more stable files to deduplicate between snapshots.
+# The user/grant is recreated from .dockweb.conf at restore time, not stored in
+# the dump.
+echo "Dumping databases per site/table..."
 rm -rf "$DB_DUMP_DIR"
 mkdir -p "$DB_DUMP_DIR"
 
@@ -86,23 +141,54 @@ for conf in "$SITES_ROOT"/*/.dockweb.conf; do
         continue
     fi
 
-    out="$DB_DUMP_DIR/${domain}.sql"
+    site_dump_dir="$DB_DUMP_DIR/$domain"
+    mkdir -p "$site_dump_dir"
+    write_database_prelude "$db_name" "$site_dump_dir/00-create-database.sql"
+
+    objects_file="$site_dump_dir/.objects"
+    objects_err="$site_dump_dir/.objects.err"
+    db_sql=$(sql_ident "$db_name")
     # --skip-ssl: shared_mysql ships a self-signed cert and the client would
     # otherwise refuse to connect. Traffic stays on the docker bridge network.
-    mysqldump -h shared_mysql -u root -p"$DB_ROOT_PASSWORD" \
-        --skip-ssl \
-        --databases "$db_name" \
-        --single-transaction --quick --lock-tables=false \
-        > "$out" 2>/dev/null
+    mysql -h shared_mysql -u root -p"$DB_ROOT_PASSWORD" \
+        --skip-ssl --batch --skip-column-names \
+        -e "SHOW FULL TABLES FROM \`$db_sql\` WHERE Table_type IN ('BASE TABLE', 'VIEW')" \
+        > "$objects_file" 2>"$objects_err"
 
-    if [ $? -ne 0 ] || [ ! -s "$out" ]; then
-        send_alert "Backup Failed" "mysqldump failed or empty for $domain ($db_name)"
-        echo "ERROR: dump failed for $domain"
+    if [ $? -ne 0 ]; then
+        send_alert "Backup Failed" "could not list tables for $domain ($db_name)"
+        echo "ERROR: could not list tables for $domain"
+        [ -s "$objects_err" ] && sed 's/^/    /' "$objects_err" >&2
         rm -rf "$DB_DUMP_DIR"
         exit 1
     fi
+    LC_ALL=C sort "$objects_file" -o "$objects_file"
 
-    echo "  - $domain: dumped ($(wc -c < "$out") bytes)"
+    object_count=0
+    while IFS=$'\t' read -r object_name object_type; do
+        [ -z "$object_name" ] && continue
+
+        case "$object_type" in
+            "BASE TABLE") prefix="10" ;;
+            "VIEW")       prefix="20" ;;
+            *)            continue ;;
+        esac
+
+        object_count=$((object_count + 1))
+        safe_name=$(safe_dump_name "$object_name")
+        out="$site_dump_dir/${prefix}-$(printf '%04d' "$object_count")-${safe_name}.sql"
+
+        if ! dump_db_object "$db_name" "$object_name" "$object_type" "$out"; then
+            send_alert "Backup Failed" "mysqldump failed or empty for $domain ($db_name.$object_name)"
+            echo "ERROR: dump failed for $domain ($object_name)"
+            rm -rf "$DB_DUMP_DIR"
+            exit 1
+        fi
+    done < "$objects_file"
+
+    rm -f "$objects_file" "$objects_err"
+
+    echo "  - $domain: dumped $object_count table/view file(s) ($(du -sh "$site_dump_dir" | cut -f1))"
     DUMPED_COUNT=$((DUMPED_COUNT + 1))
 done
 
