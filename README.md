@@ -115,7 +115,10 @@ Backup:
   dockweb backup now          Run backup immediately
   dockweb backup list         List snapshots
   dockweb backup restore      Interactive restore
+  dockweb backup pull-remote  Download Restic repo from rclone remote
+  dockweb backup recover-remote Pull remote repo, then restore
   dockweb backup test         Test restore (non-destructive)
+  dockweb backup remotes      List configured rclone remotes
   dockweb backup setup-drive  Configure Google Drive remote via rclone
 
 Monitoring:
@@ -252,6 +255,14 @@ TELEGRAM_CHAT_ID=
 ```
 
 `sync` mirrors local retention to Drive. Use `copy` if you prefer never deleting remote files, at the cost of more Drive storage.
+
+On a new server, configure the same rclone remote and Restic password, then run:
+
+```bash
+./dockweb backup recover-remote
+```
+
+That downloads the Restic repository from Drive and then opens the normal restore workflow.
 
 ---
 

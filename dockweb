@@ -68,6 +68,8 @@ show_usage() {
     echo "    backup now              Run backup immediately"
     echo "    backup list             List backup snapshots"
     echo "    backup restore          Restore from backup"
+    echo "    backup pull-remote      Download Restic repo from rclone remote"
+    echo "    backup recover-remote   Pull remote repo, then restore"
     echo "    backup test             Test backup restore"
     echo "    backup remotes          List configured rclone remotes"
     echo "    backup setup-drive      Configure Google Drive remote via rclone"
@@ -111,6 +113,8 @@ show_menu() {
         echo -e "    2) Stop services ${RED}[!]${NC}   10) List backups"
         echo -e "    3) Restart services ${RED}[!]${NC}11) Restore backup ${RED}[!]${NC}"
         echo "    4) Show status         12) Test backup"
+        echo "                           24) Pull backup from Drive"
+        echo -e "                           25) Recover from Drive ${RED}[!]${NC}"
         echo ""
         echo -e "  ${BOLD}Sites${NC}                     ${BOLD}Monitoring${NC}"
         echo "    5) List sites          13) View logs"
@@ -131,7 +135,7 @@ show_menu() {
         echo ""
         echo "    0) Exit"
         echo ""
-        echo -ne "  Choose [0-23]: "
+        echo -ne "  Choose [0-25]: "
         read -r choice
 
         case "$choice" in
@@ -158,6 +162,8 @@ show_menu() {
             21) setup_swap ;;
             22) cmd_cloudflare_menu ;;
             23) _config_backup_exclude_sites ;;
+            24) cmd_backup_pull_remote ;;
+            25) cmd_backup_recover_remote ;;
             0)  echo ""; log_info "Bye!"; exit 0 ;;
             *)  log_error "Invalid choice." ;;
         esac
@@ -227,13 +233,15 @@ main() {
                 now)      cmd_backup_now ;;
                 list)     cmd_backup_list ;;
                 restore)  cmd_backup_restore ;;
+                pull-remote) cmd_backup_pull_remote "${3:-}" ;;
+                recover-remote) cmd_backup_recover_remote ;;
                 test)     cmd_backup_test ;;
                 remotes)  cmd_backup_remotes ;;
                 setup-drive) cmd_backup_setup_drive ;;
                 excludes) cmd_backup_excludes ;;
                 exclude)  cmd_backup_exclude "${3:-}" ;;
                 include)  cmd_backup_include "${3:-}" ;;
-                *)        log_error "Usage: dockweb backup {now|list|restore|test|remotes|setup-drive|excludes|exclude <domain>|include <domain>}" ;;
+                *)        log_error "Usage: dockweb backup {now|list|restore|pull-remote [remote:path]|recover-remote|test|remotes|setup-drive|excludes|exclude <domain>|include <domain>}" ;;
             esac
             ;;
         cache)

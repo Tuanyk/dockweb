@@ -82,6 +82,73 @@ cmd_backup_restore() {
     esac
 }
 
+cmd_backup_pull_remote() {
+    local remote_arg="${1:-}"
+    header "Pull Backup Repository From Remote"
+    _backup_check_running || return 1
+    _backup_ensure_rclone || return 1
+    load_env
+
+    if ! docker exec backup_service test -f /config/rclone/rclone.conf; then
+        log_error "No rclone config found. Run: ./dockweb backup setup-drive"
+        return 1
+    fi
+
+    local remote="${remote_arg:-}"
+    if [[ -z "$remote" ]]; then
+        remote=$(get_env_val OFFSITE_BACKUP_REMOTE "")
+    fi
+    if [[ -z "$remote" ]]; then
+        local detected
+        detected=$(_backup_first_rclone_remote)
+        [[ -n "$detected" ]] && remote="${detected}:dockweb-backups/repo"
+    fi
+
+    echo ""
+    echo "  Remote source:"
+    echo "    ${remote:-not set}"
+    echo "  Local destination:"
+    echo "    ${_RESTIC_REPO}"
+    echo ""
+
+    if [[ -z "$remote" ]]; then
+        log_error "Remote path is not configured."
+        log_info "Run: ./dockweb backup setup-drive"
+        return 1
+    fi
+
+    if ! confirm "Download/sync the remote Restic repository now?" "n"; then
+        log_info "Cancelled."
+        return 0
+    fi
+
+    docker exec backup_service mkdir -p "$_RESTIC_REPO"
+    docker exec backup_service rclone sync "$remote" "$_RESTIC_REPO" \
+        --config /config/rclone/rclone.conf \
+        --fast-list \
+        --transfers "${RCLONE_TRANSFERS:-4}" \
+        --checkers "${RCLONE_CHECKERS:-8}" \
+        --progress
+
+    if [[ $? -ne 0 ]]; then
+        log_error "Failed to pull remote backup repository."
+        return 1
+    fi
+
+    log_success "Remote backup repository downloaded."
+    log_info "Available snapshots:"
+    _restic snapshots
+}
+
+cmd_backup_recover_remote() {
+    cmd_backup_pull_remote || return 1
+
+    echo ""
+    if confirm "Open restore workflow now?" "y"; then
+        cmd_backup_restore
+    fi
+}
+
 # Restore site files. Handles new (/var/www/sites) and legacy (/sites) layouts.
 _restic_restore_files() {
     local snapshot="$1"
