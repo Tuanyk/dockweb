@@ -259,7 +259,7 @@ cmd_backup_setup_drive() {
 }
 
 _backup_ensure_rclone() {
-    if docker exec backup_service command -v rclone >/dev/null 2>&1; then
+    if docker exec backup_service sh -c 'command -v rclone >/dev/null 2>&1'; then
         return 0
     fi
 
@@ -268,7 +268,7 @@ _backup_ensure_rclone() {
         local cmd
         cmd="$(docker_compose_cmd)"
         $cmd up -d --no-deps --build --force-recreate backup
-        if docker exec backup_service command -v rclone >/dev/null 2>&1; then
+        if docker exec backup_service sh -c 'command -v rclone >/dev/null 2>&1'; then
             log_success "backup_service rebuilt with rclone."
             return 0
         fi
