@@ -22,13 +22,13 @@ echo ""
 echo "Available snapshots:"
 restic snapshots
 
-# 2. Get latest snapshot ID
-LATEST_SNAPSHOT=$(restic snapshots --json | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-
-if [ -z "$LATEST_SNAPSHOT" ]; then
+# 2. Verify at least one snapshot exists. Restore uses Restic's "latest"
+# selector directly so we do not depend on JSON output ordering.
+if ! restic snapshots --json 2>/dev/null | grep -q '"id"'; then
     echo "ERROR: No snapshots found!"
     exit 1
 fi
+LATEST_SNAPSHOT="latest"
 
 echo ""
 echo "Testing restoration of latest snapshot: $LATEST_SNAPSHOT"

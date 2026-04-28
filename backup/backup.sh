@@ -79,7 +79,7 @@ dump_db_object() {
     {
         printf 'CREATE DATABASE IF NOT EXISTS `%s`;\n' "$db_sql"
         printf 'USE `%s`;\n\n' "$db_sql"
-        mysqldump -h shared_mysql -u root -p"$DB_ROOT_PASSWORD" \
+        "$DUMP_BIN" -h shared_mysql -u root -p"$DB_ROOT_PASSWORD" \
             --skip-ssl \
             --single-transaction --quick --lock-tables=false \
             --skip-dump-date \
@@ -102,6 +102,11 @@ echo "--- Starting Backup $(date) ---"
 export RESTIC_REPOSITORY=/backups/repo
 SITES_ROOT="/var/www/sites"
 DB_DUMP_DIR="/tmp/db_dumps"
+DUMP_BIN=$(command -v mariadb-dump || command -v mysqldump || true)
+if [ -z "$DUMP_BIN" ]; then
+    send_alert "Backup Failed" "neither mariadb-dump nor mysqldump is installed"
+    exit 1
+fi
 
 # 2. Initialize Repository (if not exists)
 if [ ! -f "$RESTIC_REPOSITORY/config" ]; then
