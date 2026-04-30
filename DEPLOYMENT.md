@@ -252,6 +252,16 @@ Telegram health alerts:
 
 Health alerts cover unhealthy/exited containers, sustained CPU/RAM/swap pressure, disk usage, production site failures, SSL expiry, and Nginx traffic spikes. Alert state lives in `logs/healthcheck-state`, so repeated cron runs do not resend the same active alert.
 
+Traffic/security checks:
+```bash
+./dockweb security                         # summary for all site access logs
+./dockweb security fengyangvietnam.com     # top IPs, paths, status codes, user agents
+./dockweb security ip 193.26.115.241 fengyangvietnam.com
+./dockweb security fail2ban
+./dockweb security ban 193.26.115.241      # manual fail2ban ban
+./dockweb security unban 193.26.115.241
+```
+
 ### Backup Monitoring
 
 Check backup logs:

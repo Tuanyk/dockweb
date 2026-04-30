@@ -17,6 +17,7 @@ source "${SCRIPT_DIR}/lib/sites.sh"
 source "${SCRIPT_DIR}/lib/ssl.sh"
 source "${SCRIPT_DIR}/lib/backup.sh"
 source "${SCRIPT_DIR}/lib/monitor.sh"
+source "${SCRIPT_DIR}/lib/security.sh"
 source "${SCRIPT_DIR}/lib/setup.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 
@@ -93,6 +94,7 @@ show_usage() {
     echo "    alerts test         Send a Telegram test notification"
     echo "    alerts status       Show alert settings and active alerts"
     echo "    alerts check        Run health check now"
+    echo "    security [domain]   Inspect traffic spikes and fail2ban"
     echo ""
     echo "  Config:"
     echo "    config              Show all settings"
@@ -127,6 +129,7 @@ show_menu() {
         echo "    8) Manage SSL          16) Server setup"
         echo "                           17) Configuration"
         echo "                           26) Telegram alerts"
+        echo "                           27) Security check"
         echo ""
         echo -e "  ${BOLD}Deploy & Maintain${NC}"
         echo "    18) Cache management"
@@ -140,7 +143,7 @@ show_menu() {
         echo ""
         echo "    0) Exit"
         echo ""
-        echo -ne "  Choose [0-26]: "
+        echo -ne "  Choose [0-27]: "
         read -r choice
 
         case "$choice" in
@@ -170,6 +173,7 @@ show_menu() {
             24) cmd_backup_pull_remote ;;
             25) cmd_backup_recover_remote ;;
             26) cmd_alerts_menu ;;
+            27) cmd_security ;;
             0)  echo ""; log_info "Bye!"; exit 0 ;;
             *)  log_error "Invalid choice." ;;
         esac
@@ -265,6 +269,10 @@ main() {
         alerts|alert|notifications|notify|telegram)
             shift
             cmd_alerts "$@"
+            ;;
+        security|attack|attacks)
+            shift
+            cmd_security "$@"
             ;;
         config)
             cmd_config "${2:-}"
