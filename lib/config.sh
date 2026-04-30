@@ -100,6 +100,17 @@ cmd_config_show() {
     echo "    Redis maxmemory: $(get_env_val REDIS_MAXMEMORY '256mb')"
 
     echo ""
+    echo -e "  ${BOLD}Alerts${NC}"
+    if [[ "$(get_env_val TELEGRAM_ALERTS_ENABLED 'false')" == "true" ]]; then
+        echo "    Telegram:        ${GREEN}enabled${NC}"
+    else
+        echo "    Telegram:        ${RED}disabled${NC}"
+    fi
+    echo "    Bot token:       $(mask_password "$(get_env_val TELEGRAM_BOT_TOKEN '')")"
+    echo "    Chat ID:         $(mask_password "$(get_env_val TELEGRAM_CHAT_ID '')")"
+    echo "    CPU/RAM checks:  $(get_env_val ALERT_SUSTAINED_CHECKS 2)"
+
+    echo ""
     echo -e "  ${BOLD}Swap${NC}"
     if /usr/sbin/swapon --show 2>/dev/null | grep -q '/'; then
         local swap_size_mb
@@ -120,6 +131,7 @@ cmd_config_show() {
     echo "    2) Passwords"
     echo "    3) Resources"
     echo "    4) Swap"
+    echo "    5) Telegram alerts"
     echo "    0) Back"
     echo ""
     echo -ne "  Choose: "
@@ -130,6 +142,7 @@ cmd_config_show() {
         2) cmd_config_passwords ;;
         3) cmd_config_resources ;;
         4) setup_swap ;;
+        5) cmd_alerts_menu ;;
         0) return 0 ;;
         *) log_error "Invalid choice." ;;
     esac

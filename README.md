@@ -124,6 +124,10 @@ Backup:
 Monitoring:
   dockweb log [service]       View logs (nginx, mysql, php, etc.)
   dockweb monitor             Health check dashboard
+  dockweb alerts setup        Configure Telegram health alerts
+  dockweb alerts test         Send a Telegram test notification
+  dockweb alerts status       Show alert settings and active alerts
+  dockweb alerts check        Run health check now
 ```
 
 ---
@@ -226,11 +230,21 @@ ssh -L 8888:localhost:8888 -L 61208:localhost:61208 user@your-server
 
 ```bash
 ./dockweb monitor         # health check
+./dockweb alerts status   # Telegram alert settings and active alerts
 ./dockweb log nginx       # view logs
 ./dockweb backup now      # manual backup
 ./dockweb backup test     # test restore (non-destructive)
 ./dockweb update          # pull latest Docker images
 ```
+
+### Optional: Telegram health alerts
+
+```bash
+./dockweb alerts setup
+./dockweb alerts test
+```
+
+The scheduled healthcheck can alert on unhealthy/exited containers, sustained CPU/RAM/swap pressure, high disk usage, production site failures, SSL expiry, and Nginx traffic spikes such as high request rate, repeated 4xx/5xx responses, or one IP making too many requests. Alert state is stored under `logs/healthcheck-state`, so dockweb sends one start message and one recovery message instead of repeating the same alert every cron run.
 
 ### Optional: Google Drive offsite backup
 

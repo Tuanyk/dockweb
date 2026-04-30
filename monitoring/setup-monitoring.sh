@@ -5,6 +5,8 @@
 
 echo "Setting up Docker health monitoring..."
 
+mkdir -p logs logs/healthcheck-state
+
 # Create cron job to run every 5 minutes
 CRON_JOB="*/5 * * * * cd $(pwd) && ./monitoring/healthcheck.sh >> logs/healthcheck.log 2>&1"
 
@@ -20,6 +22,7 @@ CRON_JOB="*/5 * * * * cd $(pwd) && ./monitoring/healthcheck.sh >> logs/healthche
 echo "✓ Health monitoring enabled"
 echo "✓ Checks will run every 5 minutes"
 echo "✓ Logs: $(pwd)/logs/healthcheck.log"
+echo "✓ Alert state: $(pwd)/logs/healthcheck-state"
 echo ""
 echo "To view logs: tail -f logs/healthcheck.log"
 echo "To test now: ./monitoring/healthcheck.sh"

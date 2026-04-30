@@ -243,6 +243,15 @@ Manual health check:
 ./monitoring/healthcheck.sh
 ```
 
+Telegram health alerts:
+```bash
+./dockweb alerts setup
+./dockweb alerts test
+./dockweb alerts status
+```
+
+Health alerts cover unhealthy/exited containers, sustained CPU/RAM/swap pressure, disk usage, production site failures, SSL expiry, and Nginx traffic spikes. Alert state lives in `logs/healthcheck-state`, so repeated cron runs do not resend the same active alert.
+
 ### Backup Monitoring
 
 Check backup logs:

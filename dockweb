@@ -89,6 +89,10 @@ show_usage() {
     echo "  Monitoring:"
     echo "    log [service]       View service logs"
     echo "    monitor             Show health status"
+    echo "    alerts setup        Configure Telegram health alerts"
+    echo "    alerts test         Send a Telegram test notification"
+    echo "    alerts status       Show alert settings and active alerts"
+    echo "    alerts check        Run health check now"
     echo ""
     echo "  Config:"
     echo "    config              Show all settings"
@@ -122,6 +126,7 @@ show_menu() {
         echo -e "    7) Remove site ${RED}[!]${NC}     15) Update images ${RED}[!]${NC}"
         echo "    8) Manage SSL          16) Server setup"
         echo "                           17) Configuration"
+        echo "                           26) Telegram alerts"
         echo ""
         echo -e "  ${BOLD}Deploy & Maintain${NC}"
         echo "    18) Cache management"
@@ -135,7 +140,7 @@ show_menu() {
         echo ""
         echo "    0) Exit"
         echo ""
-        echo -ne "  Choose [0-25]: "
+        echo -ne "  Choose [0-26]: "
         read -r choice
 
         case "$choice" in
@@ -164,6 +169,7 @@ show_menu() {
             23) _config_backup_exclude_sites ;;
             24) cmd_backup_pull_remote ;;
             25) cmd_backup_recover_remote ;;
+            26) cmd_alerts_menu ;;
             0)  echo ""; log_info "Bye!"; exit 0 ;;
             *)  log_error "Invalid choice." ;;
         esac
@@ -255,6 +261,10 @@ main() {
             ;;
         monitor)
             cmd_monitor
+            ;;
+        alerts|alert|notifications|notify|telegram)
+            shift
+            cmd_alerts "$@"
             ;;
         config)
             cmd_config "${2:-}"
