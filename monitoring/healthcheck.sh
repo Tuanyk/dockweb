@@ -470,9 +470,52 @@ Threshold: ${ALERT_SSL_EXPIRY_DAYS} day(s)." \
     done
 }
 
+_traffic_top_paths() {
+    local tmp="$1"
+    local pat="$2"
+    awk -v pat="$pat" '$9 ~ pat {
+        path = $7
+        sub(/\?.*/, "", path)
+        if (path == "") next
+        if (length(path) > 50) path = substr(path, 1, 47) "..."
+        key = $9 "\t" path
+        c[key]++
+    } END {
+        for (k in c) print c[k] "\t" k
+    }' "$tmp" \
+        | sort -rn \
+        | head -3 \
+        | awk -F'\t' '{ printf "  %4d  %s  %s\n", $1, $2, $3 }'
+}
+
+_traffic_top_ips() {
+    local tmp="$1"
+    awk '{
+        c[$1]++
+        if ($9 ~ /^5/) f[$1]++
+    } END {
+        for (ip in c) print c[ip], (f[ip]+0), ip
+    }' "$tmp" \
+        | sort -rn \
+        | head -3 \
+        | awk '{ printf "  %4d  %-15s  (5xx: %d)\n", $1, $3, $2 }'
+}
+
+_traffic_status_mix() {
+    local tmp="$1"
+    awk '$9 ~ /^[0-9]/ { c[$9]++ } END {
+        for (s in c) print c[s], s
+    }' "$tmp" \
+        | sort -rn \
+        | head -6 \
+        | awk 'BEGIN { ORS=""; sep="" }
+               { printf "%s%s:%d", sep, $2, $1; sep="  " }
+               END { print "" }'
+}
+
 check_nginx_traffic() {
     local log_file domain key offset_file current_size offset tmp total five_xx four_xx top_line top_ip top_count
-    local traffic_limit rpm bad reasons checks
+    local traffic_limit rpm bad reasons checks samples top5 top4 top_all topips mix
 
     is_true "$ALERT_TRAFFIC_CHECKS_ENABLED" || return
 
@@ -512,7 +555,6 @@ check_nginx_traffic() {
             }
             print top, max
         }' "$tmp")
-        rm -f "$tmp"
 
         top_ip=$(printf '%s\n' "$top_line" | awk '{print $1}')
         top_count=$(printf '%s\n' "$top_line" | awk '{print $2 + 0}')
@@ -541,9 +583,45 @@ check_nginx_traffic() {
 - 4xx responses: ${four_xx} (threshold: ${ALERT_4XX_PER_INTERVAL})"
         fi
 
+        samples=""
+        if [ "$bad" = "1" ]; then
+            if [ "$five_xx" -ge "$ALERT_5XX_PER_INTERVAL" ]; then
+                top5=$(_traffic_top_paths "$tmp" "^5")
+                [ -n "$top5" ] && samples="${samples}
+
+Top 5xx paths:
+${top5}"
+            fi
+            if [ "$four_xx" -ge "$ALERT_4XX_PER_INTERVAL" ]; then
+                top4=$(_traffic_top_paths "$tmp" "^4")
+                [ -n "$top4" ] && samples="${samples}
+
+Top 4xx paths:
+${top4}"
+            fi
+            if [ "$total" -ge "$traffic_limit" ] || [ "$top_count" -ge "$ALERT_TOP_IP_REQS_PER_INTERVAL" ]; then
+                top_all=$(_traffic_top_paths "$tmp" ".")
+                [ -n "$top_all" ] && samples="${samples}
+
+Top paths:
+${top_all}"
+            fi
+            topips=$(_traffic_top_ips "$tmp")
+            [ -n "$topips" ] && samples="${samples}
+
+Top IPs in window:
+${topips}"
+            mix=$(_traffic_status_mix "$tmp")
+            [ -n "$mix" ] && samples="${samples}
+
+Status mix: ${mix}"
+        fi
+
+        rm -f "$tmp"
+
         record_alert "traffic_${domain}" "$bad" "$checks" \
             "Possible traffic attack: ${domain}" \
-            "Nginx access log spike for ${domain}:${reasons}
+            "Nginx access log spike for ${domain}:${reasons}${samples}
 
 Window: new log lines since previous healthcheck (configured as ${ALERT_TRAFFIC_WINDOW_MINUTES} minute(s))." \
             "Traffic for ${domain} is back below configured thresholds. Last interval: ${total} requests, ${five_xx} 5xx, ${four_xx} 4xx."

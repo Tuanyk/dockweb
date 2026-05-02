@@ -95,6 +95,7 @@ show_usage() {
     echo "    alerts status       Show alert settings and active alerts"
     echo "    alerts check        Run health check now"
     echo "    security [domain]   Inspect traffic spikes and fail2ban"
+    echo "    security dashboard  Live auto-refreshing traffic dashboard"
     echo ""
     echo "  Config:"
     echo "    config              Show all settings"
@@ -173,7 +174,7 @@ show_menu() {
             24) cmd_backup_pull_remote ;;
             25) cmd_backup_recover_remote ;;
             26) cmd_alerts_menu ;;
-            27) cmd_security ;;
+            27) cmd_security_menu ;;
             0)  echo ""; log_info "Bye!"; exit 0 ;;
             *)  log_error "Invalid choice." ;;
         esac
