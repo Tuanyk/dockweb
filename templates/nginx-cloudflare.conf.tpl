@@ -43,8 +43,8 @@ server {
     error_log /var/log/nginx/{{DOMAIN}}-error.log;
 
     # Rate limiting
-    limit_req zone=general burst=20 nodelay;
-    limit_conn conn_limit 10;
+    limit_req zone=dynamic_general burst=20 nodelay;
+    limit_conn dynamic_conn_limit 10;
 
     # Health check endpoint
     location /health {
