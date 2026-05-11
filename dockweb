@@ -20,6 +20,7 @@ source "${SCRIPT_DIR}/lib/monitor.sh"
 source "${SCRIPT_DIR}/lib/security.sh"
 source "${SCRIPT_DIR}/lib/setup.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
+source "${SCRIPT_DIR}/lib/broker.sh"
 
 VERSION="1.0.0"
 
@@ -49,6 +50,18 @@ show_usage() {
     echo "    site list           List all configured sites"
     echo "    site add            Add a new site (interactive wizard)"
     echo "    site remove <domain>  Remove a site"
+    echo ""
+    echo "  Broker (clau-broker sidecar per site):"
+    echo "    broker build                       Build clau-broker:latest from \$CLAU_REPO_PATH"
+    echo "    broker add <site>                  Add a broker container for <site>"
+    echo "    broker remove <site> [--purge]     Stop and remove broker (--purge deletes secrets)"
+    echo "    broker list                        Show configured brokers and status"
+    echo "    broker status [<site>]             Show /health for one or all brokers"
+    echo "    broker logs <site> [-f]            Tail broker container logs"
+    echo "    broker secret <site> [provider]    Edit provider credentials"
+    echo "    broker allowlist <site>            Edit outbound allowlist"
+    echo "    broker token <site> [rotate]       Print or rotate the auth token"
+    echo "    broker restart <site>              Recreate the broker container"
     echo ""
     echo "  SSL:"
     echo "    ssl                 SSL management menu"
@@ -139,12 +152,13 @@ show_menu() {
         echo "    21) Configure swap"
         echo "    22) Cloudflare accounts"
         echo "    23) Backup excludes"
+        echo "    28) Broker (clau-broker sidecar)"
         echo ""
         echo -e "  ${DIM}[!] = requires confirmation${NC}"
         echo ""
         echo "    0) Exit"
         echo ""
-        echo -ne "  Choose [0-27]: "
+        echo -ne "  Choose [0-28]: "
         read -r choice
 
         case "$choice" in
@@ -175,6 +189,7 @@ show_menu() {
             25) cmd_backup_recover_remote ;;
             26) cmd_alerts_menu ;;
             27) cmd_security_menu ;;
+            28) menu_broker ;;
             0)  echo ""; log_info "Bye!"; exit 0 ;;
             *)  log_error "Invalid choice." ;;
         esac
@@ -224,6 +239,10 @@ main() {
                 remove) cmd_site_remove "${3:-}" ;;
                 *)      log_error "Usage: dockweb site {list|add|remove <domain>}" ;;
             esac
+            ;;
+        broker)
+            shift
+            cmd_broker "$@"
             ;;
         ssl)
             case "${2:-}" in
