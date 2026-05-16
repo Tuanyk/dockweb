@@ -735,15 +735,53 @@ create_database() {
         -e "s|{{DB_PASS}}|${db_pass}|g" \
         "${DOCKWEB_ROOT}/templates/db-init.sql.tpl")
 
-    # Try docker exec first (if MySQL is running)
-    if docker exec shared_mysql mysql -u root -p"${DB_ROOT_PASSWORD}" -e "SELECT 1" &>/dev/null; then
-        echo "$sql" | docker exec -i shared_mysql mysql -u root -p"${DB_ROOT_PASSWORD}" 2>/dev/null
-        log_success "Database '$db_name' created with user '$db_user'."
-    else
-        # Save for next MySQL startup
-        local init_file="${DOCKWEB_ROOT}/mysql/init/$(date +%s)-${db_name}.sql"
-        echo "$sql" > "$init_file"
-        log_info "MySQL not running. SQL saved to: $init_file"
-        log_info "It will execute on next MySQL startup."
+    # Wait up to 30s for MySQL to accept connections. `site add` is often
+    # invoked right after `dockweb start`, so a short wait is normal.
+    local waited=0 probe_err=""
+    while (( waited < 30 )); do
+        if probe_err=$(docker exec shared_mysql \
+                mysql -uroot -p"${DB_ROOT_PASSWORD}" -e "SELECT 1" 2>&1 >/dev/null); then
+            probe_err=""
+            break
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+
+    if [[ -n "$probe_err" ]]; then
+        # MySQL is unreachable. Stash the SQL so the operator can apply it
+        # by hand once MySQL is up. Do NOT drop it into mysql/init/ —
+        # docker-entrypoint-initdb.d only runs on a fresh data dir, so
+        # files left there on an existing volume silently never execute.
+        local pending_dir="${DOCKWEB_ROOT}/mysql/pending"
+        mkdir -p "$pending_dir"
+        local pending_file="${pending_dir}/$(date +%s)-${db_name}.sql"
+        umask 077
+        printf '%s\n' "$sql" > "$pending_file"
+        chmod 600 "$pending_file"
+        log_error "MySQL is not reachable after 30s. Last probe error:"
+        log_error "  ${probe_err}"
+        log_warn  "Database SQL saved to: ${pending_file}"
+        log_warn  "Apply it once MySQL is up:"
+        log_warn  "  docker exec -i shared_mysql mysql -uroot -p\"\$DB_ROOT_PASSWORD\" < \"${pending_file}\""
+        return 1
     fi
+
+    # MySQL is up — apply the SQL and capture any error output.
+    local import_err
+    if ! import_err=$(printf '%s\n' "$sql" \
+            | docker exec -i shared_mysql mysql -uroot -p"${DB_ROOT_PASSWORD}" 2>&1); then
+        log_error "Failed to create database '${db_name}':"
+        log_error "  ${import_err:-<no output>}"
+        return 1
+    fi
+
+    # Confirm the DB really exists before claiming success.
+    if ! docker exec shared_mysql \
+            mysql -uroot -p"${DB_ROOT_PASSWORD}" -e "USE \`${db_name}\`" &>/dev/null; then
+        log_error "MySQL reported success but '${db_name}' is not visible. Aborting."
+        return 1
+    fi
+
+    log_success "Database '${db_name}' created with user '${db_user}'."
 }
