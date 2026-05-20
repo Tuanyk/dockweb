@@ -274,8 +274,11 @@ cmd_update() {
     # Full update — sequential per-category
     header "Updating All Services"
 
+    # --ignore-pull-failures so docker compose pull doesn't abort on
+    # dockweb-php:latest (a local-only tag built by `dockweb php build`)
+    # and skip everything else (nginx, mysql, redis, ...).
     log_info "Pulling latest images..."
-    $cmd pull
+    $cmd pull --ignore-pull-failures
 
     # 1. Infrastructure services (safe, no user impact)
     log_info "Updating infrastructure services..."
