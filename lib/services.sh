@@ -258,6 +258,11 @@ cmd_status() {
 cmd_update() {
     local target="${1:-}"
     ensure_sites_compose
+    # Regenerate docker-compose.sites.yml from the (possibly just-updated)
+    # emitter so `dockweb self-update` followed by `dockweb update` picks up
+    # template changes (e.g. shared PHP image refactor) without requiring a
+    # separate `dockweb start`.
+    generate_sites_compose
     local cmd
     cmd="$(docker_compose_cmd)"
 
