@@ -2,6 +2,9 @@
 sites/*/
 !sites/*/.dockweb.conf
 
+# Broker instances (per-deployment, generated from templates/)
+brokers/*/
+
 # Environment (contains passwords)
 .env
 

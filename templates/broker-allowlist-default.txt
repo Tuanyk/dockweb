@@ -16,3 +16,7 @@ tagmanager.googleapis.com
 
 # Google Ads
 googleads.googleapis.com
+
+# LLM passthroughs (/openai/*, /anthropic/*)
+api.openai.com
+api.anthropic.com
