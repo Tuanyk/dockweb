@@ -51,6 +51,9 @@ show_usage() {
     echo "    site add            Add a new site (interactive wizard)"
     echo "    site remove <domain>  Remove a site"
     echo ""
+    echo "  PHP image (shared dockweb-php:latest, one image for all sites):"
+    echo "    php build [--no-cache]  (Re)build the shared PHP image"
+    echo ""
     echo "  Broker (clau-broker sidecar per site):"
     echo "    broker build                       Build clau-broker:latest from \$CLAU_REPO_PATH"
     echo "    broker add <site>                  Add a broker container for <site>"
@@ -238,6 +241,12 @@ main() {
                 add)    cmd_site_add ;;
                 remove) cmd_site_remove "${3:-}" ;;
                 *)      log_error "Usage: dockweb site {list|add|remove <domain>}" ;;
+            esac
+            ;;
+        php)
+            case "${2:-}" in
+                build)  shift 2; cmd_php_build "$@" ;;
+                *)      log_error "Usage: dockweb php build [--no-cache]" ;;
             esac
             ;;
         broker)

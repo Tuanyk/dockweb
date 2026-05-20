@@ -108,6 +108,12 @@ cmd_start() {
         echo ""
     fi
 
+    # Ensure the shared PHP image exists before bringing services up; the
+    # generated docker-compose.sites.yml references dockweb-php:latest by
+    # tag rather than per-service build blocks, so without this the first
+    # `dockweb start` on a fresh host would fail with "image not found".
+    _php_ensure_image
+
     # Start services
     log_info "Starting containers..."
     local cmd
@@ -284,9 +290,12 @@ cmd_update() {
         log_info "Skipping Redis."
     fi
 
-    # 3. PHP containers — one container at a time (rolling). Shared
-    # containers only rebuild once even if they host multiple sites.
+    # 3. PHP containers — one container at a time (rolling). All containers
+    # share the same dockweb-php:latest image, so build it once up front and
+    # recreate each container to pick it up.
     echo ""
+    log_info "Rebuilding shared ${PHP_IMAGE} image..."
+    cmd_php_build
     log_info "Updating PHP containers (rolling, one at a time)..."
     local containers
     containers=$(list_php_containers)
@@ -295,7 +304,7 @@ cmd_update() {
         local members
         members=$(sites_in_container "$c" | paste -sd',' -)
         log_info "Updating ${c} (hosts: ${members})..."
-        $cmd up -d --no-deps --build "$c"
+        $cmd up -d --no-deps --force-recreate "$c"
         _wait_healthy "$c" 60
         _reload_nginx_upstreams
         log_success "${c} updated and healthy."
@@ -378,10 +387,17 @@ _update_single_service() {
         *)
             # PHP container (service name == container name) or infrastructure.
             header "Updating ${service}"
-            $cmd up -d --no-deps --build "$service"
             if list_php_containers | grep -qx "$service"; then
+                # Shared image — rebuild once, then recreate this container
+                # so it picks up the new layers. Other PHP containers keep
+                # running on the old image until their own update runs.
+                log_info "Rebuilding shared ${PHP_IMAGE} image..."
+                cmd_php_build
+                $cmd up -d --no-deps --force-recreate "$service"
                 _wait_healthy "$service" 60
                 _reload_nginx_upstreams
+            else
+                $cmd up -d --no-deps --build "$service"
             fi
             log_success "${service} updated."
             ;;

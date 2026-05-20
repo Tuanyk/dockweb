@@ -572,11 +572,7 @@ _emit_php_service() {
 
     cat <<SERVICE
   ${container}:
-    build:
-      context: ./php
-      args:
-        PHP_UID: \${PHP_UID:-1000}
-        PHP_GID: \${PHP_GID:-1000}
+    image: dockweb-php:latest
     container_name: ${container}
     restart: unless-stopped
     environment:
@@ -617,6 +613,48 @@ SERVICE
           memory: 128M
           cpus: '0.25'
 SERVICE
+}
+
+# ─── Shared PHP image ───────────────────────────────────────
+# All php_<site> services reference image: dockweb-php:latest. The image is
+# built once via `dockweb php build`; subsequent `dockweb start` / `update`
+# reuse the same tag and only differ by container_name + mounts.
+
+PHP_IMAGE="dockweb-php:latest"
+
+_php_image_exists() {
+    docker image inspect "$PHP_IMAGE" &>/dev/null
+}
+
+_php_ensure_image() {
+    if _php_image_exists; then
+        return 0
+    fi
+    log_info "Image ${PHP_IMAGE} not found — building..."
+    cmd_php_build
+}
+
+cmd_php_build() {
+    load_env
+    local no_cache=0
+    [[ "${1:-}" == "--no-cache" ]] && no_cache=1
+
+    if [[ ! -f "${DOCKWEB_ROOT}/php/Dockerfile" ]]; then
+        log_error "php/Dockerfile not found at ${DOCKWEB_ROOT}/php/Dockerfile."
+        return 1
+    fi
+
+    header "Building ${PHP_IMAGE}"
+    local args=(build -t "$PHP_IMAGE"
+        --build-arg "PHP_UID=${PHP_UID:-1000}"
+        --build-arg "PHP_GID=${PHP_GID:-1000}"
+        "${DOCKWEB_ROOT}/php")
+    [[ $no_cache -eq 1 ]] && args=(build --no-cache -t "$PHP_IMAGE"
+        --build-arg "PHP_UID=${PHP_UID:-1000}"
+        --build-arg "PHP_GID=${PHP_GID:-1000}"
+        "${DOCKWEB_ROOT}/php")
+    docker "${args[@]}"
+    log_success "${PHP_IMAGE} built."
 }
 
 ssl_mode_cert_ready() {
