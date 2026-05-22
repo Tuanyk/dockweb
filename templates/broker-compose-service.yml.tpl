@@ -10,7 +10,7 @@
       CLAU_INBOUND_PORTS: "8080"
       BROKER_AUTH_TOKEN: "${@@TOKEN_ENV_VAR@@}"
     volumes:
-      - @@SECRETS_DIR@@/@@CLAU_PROJECT@@/broker:/run/broker-secrets:ro
+      - @@SECRETS_DIR@@/@@CLAU_PROJECT@@/broker:/run/broker-secrets
       - ./brokers/@@SITE@@/allowlist.txt:/etc/allowlist.txt:ro
     networks:
       web_network:
