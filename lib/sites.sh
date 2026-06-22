@@ -95,6 +95,25 @@ cmd_site_add() {
         fi
     fi
 
+    # Step 4c: External volume mounts (content that lives outside sites/)
+    local extra_volumes=""
+    echo ""
+    if confirm "  Mount external directories into this site?" "n"; then
+        echo -e "  ${DIM}Format: host_path:container_path[:ro]${NC}"
+        echo -e "  ${DIM}Container path should be under /var/www/sites/${domain}/${NC}"
+        echo -e "  ${DIM}Press Enter on an empty line to finish.${NC}"
+        local mount_spec mount_list=()
+        while true; do
+            echo -ne "  Mount spec: "
+            read -r mount_spec
+            [[ -z "$mount_spec" ]] && break
+            mount_list+=("$mount_spec")
+        done
+        if [[ ${#mount_list[@]} -gt 0 ]]; then
+            extra_volumes=$(IFS='|'; echo "${mount_list[*]}")
+        fi
+    fi
+
     # Step 5: Confirm
     echo ""
     echo -e "  ${BOLD}Summary:${NC}"
@@ -112,6 +131,9 @@ cmd_site_add() {
     echo "  DB User:        $db_user"
     echo "  DB Password:    $db_pass"
     echo "  Doc Root:       sites/$domain/public/"
+    if [[ -n "$extra_volumes" ]]; then
+        echo "  Extra Volumes:  $(echo "$extra_volumes" | tr '|' ', ')"
+    fi
     echo ""
 
     if ! confirm "  Create this site?"; then
@@ -126,6 +148,63 @@ cmd_site_add() {
     mkdir -p "${DOCKWEB_ROOT}/sites/${domain}/public"
     # PHP log dir is per-container (matches the compose mount below)
     mkdir -p "${DOCKWEB_ROOT}/logs/php/${php_container}"
+
+    # Create placeholder mountpoint dirs for external volumes.
+    # nginx mounts ./sites:/var/www/sites:ro, so Docker can't mkdir inside
+    # that read-only bind mount — the dirs must pre-exist on the host.
+    if [[ -n "$extra_volumes" ]]; then
+        local _mount _container_rel
+        local IFS='|'
+        for _mount in $extra_volumes; do
+            [[ -z "$_mount" ]] && continue
+            _container_rel=$(echo "$_mount" | cut -d: -f2 | sed 's|^/var/www/sites/||')
+            [[ -z "$_container_rel" ]] && continue
+            mkdir -p "${DOCKWEB_ROOT}/sites/${_container_rel}"
+        done
+        # Auto-create static-handler.php for sites with a /static/ mount.
+        if echo "$extra_volumes" | grep -q '/static'; then
+            local handler="${DOCKWEB_ROOT}/sites/${domain}/public/static-handler.php"
+            if [[ ! -f "$handler" ]]; then
+                cat > "$handler" <<'HANDLER_EOF'
+<?php
+$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$docRoot = rtrim($_SERVER['DOCUMENT_ROOT'] ?? __DIR__, '/');
+$fsPath = $docRoot . $uri;
+
+if (!is_dir($fsPath)) {
+    http_response_code(404);
+    exit;
+}
+
+$files = scandir($fsPath);
+$firstImage = null;
+foreach ($files as $file) {
+    if ($file[0] === '.') continue;
+    if (preg_match('/_1\.(png|jpe?g|gif|webp)$/i', $file)) {
+        $firstImage = $file;
+        break;
+    }
+}
+if (!$firstImage) {
+    foreach ($files as $file) {
+        if ($file[0] === '.') continue;
+        if (preg_match('/\.(png|jpe?g|gif|webp)$/i', $file)) {
+            $firstImage = $file;
+            break;
+        }
+    }
+}
+if (!$firstImage) {
+    http_response_code(404);
+    exit;
+}
+
+header('X-Accel-Redirect: ' . rtrim($uri, '/') . '/' . $firstImage);
+exit;
+HANDLER_EOF
+            fi
+        fi
+    fi
 
     # Placeholder index (only if no index.php exists yet)
     if [[ ! -f "${DOCKWEB_ROOT}/sites/${domain}/public/index.php" ]]; then
@@ -147,6 +226,9 @@ DB_PASS=$db_pass
 PHP_CONTAINER=$php_container
 CACHE_ENABLED=$cache_enabled
 CONFEOF
+    if [[ -n "$extra_volumes" ]]; then
+        echo "EXTRA_VOLUMES=${extra_volumes}" >> "${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf"
+    fi
     chmod 600 "${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf"
 
     # Step 7: Generate nginx config
@@ -163,6 +245,7 @@ CONFEOF
     # Step 9: Regenerate compose
     log_info "Regenerating docker-compose.sites.yml..."
     generate_sites_compose
+    generate_volumes_compose
 
     # Step 10: Start / recreate the PHP container if the stack is already running.
     # MUST happen before any nginx reload (Step 11): the new vhost references
@@ -469,6 +552,7 @@ cmd_site_remove() {
     # Regenerate compose *before* touching containers so the new definitions
     # are in place for `up -d`.
     generate_sites_compose
+    generate_volumes_compose
 
     if [[ -z "$siblings" ]]; then
         # Sole member — stop + remove the container outright.
@@ -561,6 +645,70 @@ FOOTER
     log_success "docker-compose.sites.yml updated (${container_total} PHP container(s), ${site_total} site(s))."
 }
 
+# Read EXTRA_VOLUMES from a site's .dockweb.conf and print one mount per line.
+# Returns nothing (exit 1) if the site has no extra volumes.
+_get_extra_volumes() {
+    local domain="$1"
+    local conf="${DOCKWEB_ROOT}/sites/${domain}/.dockweb.conf"
+    [[ -f "$conf" ]] || return 1
+    grep -q '^EXTRA_VOLUMES=' "$conf" 2>/dev/null || return 1
+    local extra
+    extra=$(grep '^EXTRA_VOLUMES=' "$conf" | cut -d= -f2-)
+    [[ -z "$extra" ]] && return 1
+    # Split pipe-separated value into one mount per line.
+    local IFS='|'
+    local mount
+    for mount in $extra; do
+        [[ -n "$mount" ]] && echo "$mount"
+    done
+    return 0
+}
+
+# Generate docker-compose.volumes.yml — an override file that adds external
+# volume mounts to the nginx service.  Source: each site's EXTRA_VOLUMES key
+# in .dockweb.conf (pipe-separated mount specs).  The file is removed when no
+# site defines extra volumes, so docker_compose_cmd() can include it
+# conditionally.
+generate_volumes_compose() {
+    local output="${DOCKWEB_ROOT}/docker-compose.volumes.yml"
+    local sites
+    sites=$(list_all_sites)
+
+    # Collect all extra volume mounts across every site.
+    local all_mounts=()
+    local domain mount
+    while IFS= read -r domain; do
+        [[ -z "$domain" ]] && continue
+        while IFS= read -r mount; do
+            [[ -n "$mount" ]] && all_mounts+=("$mount")
+        done < <(_get_extra_volumes "$domain")
+    done <<< "$sites"
+
+    if [[ ${#all_mounts[@]} -eq 0 ]]; then
+        # No extra volumes — remove stale file so docker_compose_cmd drops it.
+        rm -f "$output"
+        return 0
+    fi
+
+    local tmp="${output}.tmp"
+    cat > "$tmp" <<'HEADER'
+# Auto-generated by dockweb - DO NOT EDIT MANUALLY
+# External volume mounts for nginx, sourced from each site's EXTRA_VOLUMES
+# key in .dockweb.conf.  Regenerate with: dockweb start (or dockweb site add/remove)
+
+services:
+  nginx:
+    volumes:
+HEADER
+
+    for mount in "${all_mounts[@]}"; do
+        echo "      - ${mount}" >> "$tmp"
+    done
+
+    mv "$tmp" "$output"
+    log_success "docker-compose.volumes.yml updated (${#all_mounts[@]} external mount(s))."
+}
+
 # Emit one service block for a PHP container with all its mounted sites.
 # Service name == container_name so that restart/update commands can target
 # either interchangeably.
@@ -584,6 +732,12 @@ SERVICE
     while IFS= read -r d; do
         [[ -z "$d" ]] && continue
         echo "      - ./sites/${d}:/var/www/sites/${d}"
+        # Emit any extra external volumes defined in the site's .dockweb.conf
+        # (pipe-separated: host:container[:opts]|host2:container2[:opts]|...)
+        local mount
+        while IFS= read -r mount; do
+            [[ -n "$mount" ]] && echo "      - ${mount}"
+        done < <(_get_extra_volumes "$d")
     done <<< "$domains"
 
     cat <<SERVICE
@@ -732,6 +886,58 @@ generate_nginx_conf() {
     # templates don't have these markers, so this is a no-op for them.
     if [[ "$cache_enabled" != "true" ]]; then
         sed -i '/# CACHE: BEGIN/,/# CACHE: END/d' "$output"
+    fi
+
+    # Inject location blocks for external volume mounts (EXTRA_VOLUMES).
+    # Without this, directory requests under mounted paths (e.g. /static/img/123/)
+    # hit try_files $uri/ in the default location block, which returns 403
+    # because the directory exists but has no index file.
+    #
+    # Two strategies depending on the mount path:
+    #   /static/  → try_files $uri /static-handler.php  (PHP scans the dir,
+    #               finds the first *_1.png via X-Accel-Redirect, nginx
+    #               serves it — no extra HTTP round-trip)
+    #   other     → rewrite ^ /index.php  (let WordPress handle it)
+    local extra_mounts
+    extra_mounts=$(_get_extra_volumes "$domain" 2>/dev/null || true)
+    if [[ -n "$extra_mounts" ]]; then
+        local inject=""
+        local mount container_path url_path
+        while IFS= read -r mount; do
+            [[ -z "$mount" ]] && continue
+            # Extract container path (2nd field, between 1st and optional 2nd ':')
+            container_path=$(echo "$mount" | cut -d: -f2)
+            # Only handle paths under /var/www/sites/{domain}/public/
+            local prefix="/var/www/sites/${domain}/public"
+            if [[ "$container_path" == "${prefix}"/* ]]; then
+                url_path="${container_path#${prefix}}"
+                # Ensure leading slash, no trailing slash for the location
+                url_path="/${url_path#/}"
+                url_path="${url_path%/}"
+                if [[ "$url_path" == "/static" ]]; then
+                    inject="${inject}    # External volume: ${url_path}/ (image handler)
+    location ${url_path}/ {
+        try_files \$uri /static-handler.php?\$args;
+    }
+
+"
+                else
+                    inject="${inject}    # External volume: ${url_path}/
+    location ${url_path}/ {
+        rewrite ^ /index.php?\$query_string last;
+    }
+
+"
+                fi
+            fi
+        done <<< "$extra_mounts"
+        if [[ -n "$inject" ]]; then
+            # Insert before the "# Main location block" comment
+            awk -v blk="$inject" '
+                /# Main location block/ && !done { printf "%s", blk; done=1 }
+                { print }
+            ' "$output" > "${output}.tmp" && mv "${output}.tmp" "$output"
+        fi
     fi
 
     log_success "Nginx config: nginx/conf.d/${domain}.conf"

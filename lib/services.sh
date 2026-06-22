@@ -58,6 +58,63 @@ cmd_start() {
     while IFS= read -r domain; do
         [[ -z "$domain" ]] && continue
         mkdir -p "${DOCKWEB_ROOT}/sites/${domain}/public"
+        # Create placeholder mountpoint dirs for any EXTRA_VOLUMES the site
+        # declares.  nginx mounts ./sites:/var/www/sites:ro, so Docker can't
+        # mkdir inside that read-only bind mount — the dirs must pre-exist on
+        # the host.  Only container paths under /var/www/sites/ need this.
+        local extra_mount extra_container_rel
+        while IFS= read -r extra_mount; do
+            [[ -z "$extra_mount" ]] && continue
+            # Extract container path (2nd field, between 1st and optional 2nd ':')
+            extra_container_rel=$(echo "$extra_mount" | cut -d: -f2 | sed 's|^/var/www/sites/||')
+            [[ -z "$extra_container_rel" ]] && continue
+            mkdir -p "${DOCKWEB_ROOT}/sites/${extra_container_rel}"
+        done < <(_get_extra_volumes "$domain")
+        # Auto-create static-handler.php for sites with a /static/ external
+        # volume mount.  The handler scans a directory for the first *_1.png
+        # and returns X-Accel-Redirect so nginx serves the file directly.
+        if _get_extra_volumes "$domain" 2>/dev/null | grep -q '/static'; then
+            local handler="${DOCKWEB_ROOT}/sites/${domain}/public/static-handler.php"
+            if [[ ! -f "$handler" ]]; then
+                cat > "$handler" <<'HANDLER_EOF'
+<?php
+$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$docRoot = rtrim($_SERVER['DOCUMENT_ROOT'] ?? __DIR__, '/');
+$fsPath = $docRoot . $uri;
+
+if (!is_dir($fsPath)) {
+    http_response_code(404);
+    exit;
+}
+
+$files = scandir($fsPath);
+$firstImage = null;
+foreach ($files as $file) {
+    if ($file[0] === '.') continue;
+    if (preg_match('/_1\.(png|jpe?g|gif|webp)$/i', $file)) {
+        $firstImage = $file;
+        break;
+    }
+}
+if (!$firstImage) {
+    foreach ($files as $file) {
+        if ($file[0] === '.') continue;
+        if (preg_match('/\.(png|jpe?g|gif|webp)$/i', $file)) {
+            $firstImage = $file;
+            break;
+        }
+    }
+}
+if (!$firstImage) {
+    http_response_code(404);
+    exit;
+}
+
+header('X-Accel-Redirect: ' . rtrim($uri, '/') . '/' . $firstImage);
+exit;
+HANDLER_EOF
+            fi
+        fi
     done <<< "$sites"
 
     # PHP log dirs are per-container (shared containers collect logs for all
@@ -99,6 +156,7 @@ cmd_start() {
     # This way, pulling template updates and running `dockweb start` is enough
     # to roll them out — no need to re-add or manually edit per-site confs.
     generate_sites_compose
+    generate_volumes_compose
     regenerate_all_nginx_confs
 
     # Security check
@@ -263,6 +321,7 @@ cmd_update() {
     # template changes (e.g. shared PHP image refactor) without requiring a
     # separate `dockweb start`.
     generate_sites_compose
+    generate_volumes_compose
     local cmd
     cmd="$(docker_compose_cmd)"
 
