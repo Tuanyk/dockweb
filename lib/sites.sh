@@ -161,49 +161,6 @@ cmd_site_add() {
             [[ -z "$_container_rel" ]] && continue
             mkdir -p "${DOCKWEB_ROOT}/sites/${_container_rel}"
         done
-        # Auto-create static-handler.php for sites with a /static/ mount.
-        if echo "$extra_volumes" | grep -q '/static'; then
-            local handler="${DOCKWEB_ROOT}/sites/${domain}/public/static-handler.php"
-            if [[ ! -f "$handler" ]]; then
-                cat > "$handler" <<'HANDLER_EOF'
-<?php
-$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$docRoot = rtrim($_SERVER['DOCUMENT_ROOT'] ?? __DIR__, '/');
-$fsPath = $docRoot . $uri;
-
-if (!is_dir($fsPath)) {
-    http_response_code(404);
-    exit;
-}
-
-$files = scandir($fsPath);
-$firstImage = null;
-foreach ($files as $file) {
-    if ($file[0] === '.') continue;
-    if (preg_match('/_1\.(png|jpe?g|gif|webp)$/i', $file)) {
-        $firstImage = $file;
-        break;
-    }
-}
-if (!$firstImage) {
-    foreach ($files as $file) {
-        if ($file[0] === '.') continue;
-        if (preg_match('/\.(png|jpe?g|gif|webp)$/i', $file)) {
-            $firstImage = $file;
-            break;
-        }
-    }
-}
-if (!$firstImage) {
-    http_response_code(404);
-    exit;
-}
-
-header('X-Accel-Redirect: ' . rtrim($uri, '/') . '/' . $firstImage);
-exit;
-HANDLER_EOF
-            fi
-        fi
     fi
 
     # Placeholder index (only if no index.php exists yet)
@@ -886,58 +843,6 @@ generate_nginx_conf() {
     # templates don't have these markers, so this is a no-op for them.
     if [[ "$cache_enabled" != "true" ]]; then
         sed -i '/# CACHE: BEGIN/,/# CACHE: END/d' "$output"
-    fi
-
-    # Inject location blocks for external volume mounts (EXTRA_VOLUMES).
-    # Without this, directory requests under mounted paths (e.g. /static/img/123/)
-    # hit try_files $uri/ in the default location block, which returns 403
-    # because the directory exists but has no index file.
-    #
-    # Two strategies depending on the mount path:
-    #   /static/  → try_files $uri /static-handler.php  (PHP scans the dir,
-    #               finds the first *_1.png via X-Accel-Redirect, nginx
-    #               serves it — no extra HTTP round-trip)
-    #   other     → rewrite ^ /index.php  (let WordPress handle it)
-    local extra_mounts
-    extra_mounts=$(_get_extra_volumes "$domain" 2>/dev/null || true)
-    if [[ -n "$extra_mounts" ]]; then
-        local inject=""
-        local mount container_path url_path
-        while IFS= read -r mount; do
-            [[ -z "$mount" ]] && continue
-            # Extract container path (2nd field, between 1st and optional 2nd ':')
-            container_path=$(echo "$mount" | cut -d: -f2)
-            # Only handle paths under /var/www/sites/{domain}/public/
-            local prefix="/var/www/sites/${domain}/public"
-            if [[ "$container_path" == "${prefix}"/* ]]; then
-                url_path="${container_path#${prefix}}"
-                # Ensure leading slash, no trailing slash for the location
-                url_path="/${url_path#/}"
-                url_path="${url_path%/}"
-                if [[ "$url_path" == "/static" ]]; then
-                    inject="${inject}    # External volume: ${url_path}/ (image handler)
-    location ${url_path}/ {
-        try_files \$uri /static-handler.php?\$args;
-    }
-
-"
-                else
-                    inject="${inject}    # External volume: ${url_path}/
-    location ${url_path}/ {
-        rewrite ^ /index.php?\$query_string last;
-    }
-
-"
-                fi
-            fi
-        done <<< "$extra_mounts"
-        if [[ -n "$inject" ]]; then
-            # Insert before the "# Main location block" comment
-            awk -v blk="$inject" '
-                /# Main location block/ && !done { printf "%s", blk; done=1 }
-                { print }
-            ' "$output" > "${output}.tmp" && mv "${output}.tmp" "$output"
-        fi
     fi
 
     log_success "Nginx config: nginx/conf.d/${domain}.conf"
