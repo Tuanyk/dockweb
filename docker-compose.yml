@@ -254,17 +254,24 @@ services:
     image: alpine:latest
     container_name: logrotate
     restart: unless-stopped
-    command: "/bin/sh -c 'apk add --no-cache logrotate && printf \"17 * * * * /usr/sbin/logrotate /etc/logrotate.d/*\\n\" > /etc/crontabs/root && /usr/sbin/logrotate /etc/logrotate.d/* || true && crond -f'"
+    # logrotate refuses configs not owned by root, and bind-mounted files keep the
+    # host owner. Mount the dir read-only elsewhere and copy it in as root before each run.
+    command:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache logrotate
+        printf '#!/bin/sh\nmkdir -p /etc/logrotate.d\ncp /etc/logrotate-src/* /etc/logrotate.d/\nchown root:root /etc/logrotate.d/*\nchmod 644 /etc/logrotate.d/*\n/usr/sbin/logrotate /etc/logrotate.d/*\n' > /usr/local/bin/run-logrotate.sh
+        chmod +x /usr/local/bin/run-logrotate.sh
+        printf '17 * * * * /usr/local/bin/run-logrotate.sh\n' > /etc/crontabs/root
+        /usr/local/bin/run-logrotate.sh || true
+        exec crond -f
     volumes:
       - ./logs/nginx:/var/log/nginx
       - ./logs/modsecurity:/var/log/modsecurity
       - ./certbot/logs:/var/log/letsencrypt
       - ./sites:/var/www/sites
-      - ./logrotate/nginx:/etc/logrotate.d/nginx
-      - ./logrotate/modsecurity:/etc/logrotate.d/modsecurity
-      - ./logrotate/certbot:/etc/logrotate.d/certbot
-      - ./logrotate/app-logs:/etc/logrotate.d/app-logs
-      - ./logrotate/wordpress:/etc/logrotate.d/wordpress
+      - ./logrotate:/etc/logrotate-src:ro
     networks:
       - web_network
     logging:
