@@ -72,6 +72,7 @@ show_usage() {
     echo "    ssl <domain> <mode> Switch SSL mode (cloudflare|letsencrypt|local|dev|dev-ssl)"
     echo "    ssl install-cf <domain>      Install Cloudflare Origin Cert"
     echo "    ssl install-le <domain>      Install Let's Encrypt Cert"
+    echo "    ssl issue-le <host> [...]    Let's Encrypt cert for any name (no site needed; renews + nginx reloads by itself)"
     echo "    ssl install-local <domain>   Install local dev cert (mkcert)"
     echo "    ssl update-cf-ips            Update Cloudflare IP ranges"
     echo ""
@@ -258,6 +259,7 @@ main() {
                 "")            cmd_ssl_menu ;;
                 install-cf)    cmd_ssl_install_cf "${3:-}" ;;
                 install-le)    cmd_ssl_install_le "${3:-}" ;;
+                issue-le)      shift 2; cmd_ssl_issue_le "$@" ;;
                 install-local) cmd_ssl_install_local "${3:-}" ;;
                 update-cf-ips) update_cloudflare_ips ;;
                 *)             cmd_ssl_menu "${2:-}" "${3:-}" ;;

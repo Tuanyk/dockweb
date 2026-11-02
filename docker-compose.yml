@@ -22,6 +22,7 @@ services:
       - ./cloudflare-certs:/etc/nginx/cloudflare-certs:ro
       - ./nginx/cloudflare-ips.conf:/etc/nginx/cloudflare-ips.conf:ro
       - ./local-certs:/etc/nginx/local-certs:ro
+      - ./nginx/docker-entrypoint.d/40-reload-on-renewal.sh:/docker-entrypoint.d/40-reload-on-renewal.sh:ro
     depends_on:
       - mysql
     networks:
@@ -297,7 +298,12 @@ services:
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
       - ./certbot/logs:/var/log/letsencrypt
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done;'"
+    # --deploy-hook runs only for a certificate that really was renewed: it touches a marker that gateway_nginx watches
+    # (nginx/docker-entrypoint.d/40-reload-on-renewal.sh) and reloads on. certbot has no docker socket, so a file is the signal.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet --deploy-hook 'touch /var/www/certbot/.renewed'; sleep 12h & wait $${!}; done;"
     logging:
       driver: "json-file"
       options:

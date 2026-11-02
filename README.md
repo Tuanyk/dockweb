@@ -102,6 +102,7 @@ SSL:
   dockweb ssl <domain> <mode>         Switch mode (cloudflare|letsencrypt|local|dev|dev-ssl)
   dockweb ssl install-cf <domain>     Install Cloudflare Origin Certificate
   dockweb ssl install-le <domain>     Install Let's Encrypt certificate
+  dockweb ssl issue-le <host> [...]   Let's Encrypt certificate for any name (no site needed, e.g. a proxied container)
   dockweb ssl install-local <domain>  Install local dev cert (mkcert)
   dockweb ssl update-cf-ips           Refresh Cloudflare IP allowlist
 

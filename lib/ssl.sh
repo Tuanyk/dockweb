@@ -547,6 +547,81 @@ cmd_ssl_install_le() {
     log_info "Auto-renewal handled by certbot container (every 12h)."
 }
 
+# Let's Encrypt certificate for any name(s), no dockweb site needed (a proxied container, a room server...). Validation is HTTP-01 through
+# the default server on port 80 (nginx/conf.d/00-default.conf), so the name only has to point at this machine with port 80 reachable
+# (DNS-only / grey cloud on Cloudflare). The certificate lives in certbot/conf/live/<first host>/{fullchain,privkey}.pem = in nginx at
+# /etc/letsencrypt/live/<first host>/. The certbot container renews it, and gateway_nginx reloads by itself after a renewal.
+cmd_ssl_issue_le() {
+    if [[ $# -lt 1 ]]; then
+        log_error "Usage: dockweb ssl issue-le <host> [<more hosts>]"
+        return 1
+    fi
+    # lower-case DNS labels of 1-63 characters, no empty label, no leading/trailing '-', at least one dot
+    local label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
+    local hosts=() host
+    for host in "$@"; do
+        host="${host,,}"
+        if [[ ! "$host" =~ ^(${label}\.)+${label}$ ]]; then
+            log_error "Not a valid host name: $host"
+            return 1
+        fi
+        hosts+=("$host")
+    done
+    set -- "${hosts[@]}"
+    local first="$1"
+
+    load_env
+    header "Let's Encrypt certificate: $*"
+
+    # An existing certificate of that name is left alone: `certonly --cert-name` with another set of -d would REPLACE its domains
+    # (a cert that also covers www.<host> would silently lose it). It renews by itself; to change the names remove it first:
+    #   docker compose run --rm --entrypoint "certbot delete --cert-name <host>" certbot
+    # (asked of nginx too: certbot's archive/ can be root-only so a plain `test -f` through the live/ symlink fails for another user)
+    if [[ -f "${DOCKWEB_ROOT}/certbot/conf/live/${first}/fullchain.pem" ]] \
+        || docker exec gateway_nginx test -f "/etc/letsencrypt/live/${first}/fullchain.pem" 2>/dev/null; then
+        log_info "A certificate named '${first}' already exists (renewed by itself); nothing to do."
+        return 0
+    fi
+
+    local cmd names
+    cmd="$(docker_compose_cmd)"
+    mkdir -p "${DOCKWEB_ROOT}/certbot/conf" "${DOCKWEB_ROOT}/certbot/www" "${DOCKWEB_ROOT}/certbot/logs"
+
+    # the name list is read first (a pipe into grep -q can die of SIGPIPE under pipefail)
+    names="$(docker ps --format '{{.Names}}')"
+    if ! grep -qx gateway_nginx <<<"$names"; then
+        log_info "Starting nginx..."
+        $cmd up -d nginx
+    fi
+    # the renewal loop is the persistent certbot service: without it the certificate would be issued but never renewed
+    if ! grep -qx certbot <<<"$names"; then
+        log_info "Starting the certbot renewal service..."
+        $cmd up -d certbot
+    fi
+
+    local -a email_args=(--register-unsafely-without-email)
+    if [[ -n "${CERTBOT_EMAIL:-}" ]]; then
+        email_args=(--email "${CERTBOT_EMAIL}")
+    fi
+    local -a domain_args=()
+    local h
+    for h in "$@"; do domain_args+=(-d "$h"); done
+
+    # --deploy-hook is saved into the certificate's renewal config, so even a manual `certbot renew` tells nginx to reload
+    log_info "Requesting the certificate (HTTP-01 on port 80; the name must point here and not be proxied)..."
+    if ! $cmd run --rm --entrypoint certbot certbot certonly --webroot -w /var/www/certbot \
+        "${email_args[@]}" "${domain_args[@]}" --cert-name "$first" \
+        --deploy-hook "touch /var/www/certbot/.renewed" \
+        --agree-tos --non-interactive; then
+        log_error "certbot failed. Check: DNS of $* points to this server (grey cloud), port 80 is open, nginx is running."
+        return 1
+    fi
+
+    log_info "Certificate files (inside nginx): /etc/letsencrypt/live/${first}/{fullchain,privkey}.pem"
+    _reload_or_start_nginx
+    log_success "Done. Renewal is automatic: certbot renews every 12 h and nginx reloads by itself."
+}
+
 cmd_ssl_install_local() {
     local domain="${1:-}"
     if [[ -z "$domain" ]]; then
